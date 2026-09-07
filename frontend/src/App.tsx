@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import ControlsPanel from './components/ControlsPanel'
+import Filmstrip from './components/Filmstrip'
 import ImageCanvas from './components/ImageCanvas'
-import Sidebar from './components/Sidebar'
+import Toolbar from './components/Toolbar'
 import {
   detectObjects,
   exportYolo,
@@ -18,7 +19,7 @@ import {
   saveSettings,
   type StoredImage,
 } from './lib/storage'
-import type { Box, LabelDisplay, LabeledImage, TileMode } from './types'
+import type { Box, LabelDisplay, LabeledImage, TileMode, Tool } from './types'
 
 // Detections are fetched once at a permissive threshold; the sliders then
 // filter that raw set client-side so they stay instant.
@@ -108,6 +109,8 @@ export default function App() {
   const [mergeClasses, setMergeClasses] = useState(stored.mergeClasses)
   const [highRecall, setHighRecall] = useState(stored.highRecall)
   const [hiddenClasses, setHiddenClasses] = useState<Set<string>>(new Set())
+  const [tool, setTool] = useState<Tool>('select')
+  const [selectedBoxId, setSelectedBoxId] = useState<string | null>(null)
   const [health, setHealth] = useState<HealthStatus | null>(null)
   const [detecting, setDetecting] = useState(false)
   const [progressLabel, setProgressLabel] = useState<string | null>(null)
@@ -115,7 +118,9 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
   const [restored, setRestored] = useState(false)
 
-  const history = useRef<{ imageId: string; boxes: Box[]; edited: boolean }[]>([])
+  type Snapshot = { imageId: string; boxes: Box[]; edited: boolean }
+  const [history, setHistory] = useState<Snapshot[]>([])
+  const [future, setFuture] = useState<Snapshot[]>([])
 
   const promptClasses = useMemo(
     () =>
@@ -231,28 +236,30 @@ export default function App() {
     )
   }, [confidence, overlap, mergeClasses])
 
+  const snapshot = useCallback(
+    (imageId: string): Snapshot | null => {
+      const current = images.find((img) => img.id === imageId)
+      return current ? { imageId, boxes: current.boxes, edited: current.edited } : null
+    },
+    [images],
+  )
+
   const updateBoxes = useCallback(
     (boxes: Box[]) => {
       if (!selectedId) return
-      setImages((prev) => {
-        const current = prev.find((img) => img.id === selectedId)
-        if (current) {
-          history.current.push({
-            imageId: selectedId,
-            boxes: current.boxes,
-            edited: current.edited,
-          })
-          if (history.current.length > 100) history.current.shift()
-        }
-        return prev.map((img) => (img.id === selectedId ? { ...img, boxes, edited: true } : img))
-      })
+      const previous = snapshot(selectedId)
+      if (previous) {
+        setHistory((prev) => [...prev, previous].slice(-100))
+        setFuture([])
+      }
+      setImages((prev) =>
+        prev.map((img) => (img.id === selectedId ? { ...img, boxes, edited: true } : img)),
+      )
     },
-    [selectedId],
+    [selectedId, snapshot],
   )
 
-  const undo = useCallback(() => {
-    const entry = history.current.pop()
-    if (!entry) return
+  const applySnapshot = useCallback((entry: Snapshot) => {
     setImages((prev) =>
       prev.map((img) =>
         img.id === entry.imageId ? { ...img, boxes: entry.boxes, edited: entry.edited } : img,
@@ -260,6 +267,30 @@ export default function App() {
     )
     setSelectedId(entry.imageId)
   }, [])
+
+  const undo = useCallback(() => {
+    const entry = history[history.length - 1]
+    if (!entry) return
+    const current = snapshot(entry.imageId)
+    if (current) setFuture((prev) => [...prev, current])
+    setHistory((prev) => prev.slice(0, -1))
+    applySnapshot(entry)
+  }, [history, snapshot, applySnapshot])
+
+  const redo = useCallback(() => {
+    const entry = future[future.length - 1]
+    if (!entry) return
+    const current = snapshot(entry.imageId)
+    if (current) setHistory((prev) => [...prev, current])
+    setFuture((prev) => prev.slice(0, -1))
+    applySnapshot(entry)
+  }, [future, snapshot, applySnapshot])
+
+  const deleteSelectedBox = useCallback(() => {
+    if (!selected || !selectedBoxId) return
+    updateBoxes(selected.boxes.filter((b) => b.id !== selectedBoxId))
+    setSelectedBoxId(null)
+  }, [selected, selectedBoxId, updateBoxes])
 
   // Keyboard shortcuts for fast review: image paging, class picking, undo.
   useEffect(() => {
@@ -269,10 +300,25 @@ export default function App() {
 
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault()
-        undo()
+        if (e.shiftKey) redo()
+        else undo()
+        return
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+        e.preventDefault()
+        redo()
         return
       }
       if (e.ctrlKey || e.metaKey || e.altKey) return
+
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault()
+        deleteSelectedBox()
+      }
+      if (e.key === 'Escape') setSelectedBoxId(null)
+      if (e.key.toLowerCase() === 'v') setTool('select')
+      if (e.key.toLowerCase() === 'd') setTool('draw')
+      if (e.key.toLowerCase() === 'h') setTool('pan')
 
       if (e.key === 'ArrowRight' || e.key === ']') {
         const index = images.findIndex((img) => img.id === selectedId)
@@ -289,7 +335,7 @@ export default function App() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [images, selectedId, promptClasses, undo])
+  }, [images, selectedId, promptClasses, undo, redo, deleteSelectedBox])
 
   async function addFiles(files: FileList) {
     setError(null)
@@ -325,7 +371,8 @@ export default function App() {
   async function clearAll() {
     setImages([])
     setSelectedId(null)
-    history.current = []
+    setHistory([])
+    setFuture([])
     await clearImages()
   }
 
@@ -432,6 +479,11 @@ export default function App() {
             {images.length} image{images.length === 1 ? '' : 's'} ·{' '}
             {images.reduce((sum, img) => sum + img.boxes.length, 0)} labels
           </p>
+          {images.length > 0 && (
+            <button onClick={clearAll} className="text-[11px] text-gray-400 hover:text-red-600">
+              clear all
+            </button>
+          )}
           <span
             className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${statusPill.color}`}
             title={health?.error ?? health?.model ?? 'Backend not reachable'}
@@ -449,26 +501,52 @@ export default function App() {
       )}
 
       <div className="flex min-h-0 flex-1">
-        <Sidebar
-          images={images}
-          selectedId={selectedId}
-          onSelect={setSelectedId}
-          onAddFiles={addFiles}
-          onRemove={removeImage}
-          onClearAll={clearAll}
-        />
+        <div
+          className="flex min-w-0 flex-1 flex-col"
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault()
+            if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files)
+          }}
+        >
+          <Toolbar
+            tool={tool}
+            onToolChange={setTool}
+            activeClass={activeClass || promptClasses[0] || ''}
+            promptClasses={promptClasses}
+            onActiveClassChange={setActiveClass}
+            canUndo={history.length > 0}
+            canRedo={future.length > 0}
+            onUndo={undo}
+            onRedo={redo}
+            hasSelection={!!selectedBoxId}
+            onDeleteSelected={deleteSelectedBox}
+            disabled={!selected}
+          />
 
-        <ImageCanvas
-          image={selected}
-          labelDisplay={labelDisplay}
-          opacity={opacity}
-          activeClass={activeClass}
-          promptClasses={promptClasses}
-          hiddenClasses={hiddenClasses}
-          detecting={detecting}
-          progressLabel={progressLabel}
-          onBoxesChange={updateBoxes}
-        />
+          <ImageCanvas
+            image={selected}
+            labelDisplay={labelDisplay}
+            opacity={opacity}
+            activeClass={activeClass}
+            promptClasses={promptClasses}
+            hiddenClasses={hiddenClasses}
+            tool={tool}
+            selectedBoxId={selectedBoxId}
+            onSelectBox={setSelectedBoxId}
+            detecting={detecting}
+            progressLabel={progressLabel}
+            onBoxesChange={updateBoxes}
+          />
+
+          <Filmstrip
+            images={images}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+            onAddFiles={addFiles}
+            onRemove={removeImage}
+          />
+        </div>
 
         <ControlsPanel
           promptText={promptText}

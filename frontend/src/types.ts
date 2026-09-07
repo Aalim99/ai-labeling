@@ -23,3 +23,6 @@ export type LabelDisplay = 'confidence' | 'label' | 'none'
 
 /** Tiling mode: auto turns it on for images large enough to need it. */
 export type TileMode = 'auto' | 'on' | 'off'
+
+/** Canvas interaction mode. */
+export type Tool = 'select' | 'draw' | 'pan'

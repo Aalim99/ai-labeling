@@ -85,18 +85,25 @@ If the backend runs elsewhere, either change the proxy target in `frontend/vite.
 
 ## Using it
 
-1. Drop images into the left panel.
+1. Add images with **+ Files** or **+ Folder** in the strip along the bottom, or drop them onto the
+   canvas. A whole folder imports at once.
 2. Type the classes you want in **What to label**, comma-separated (or use a preset).
-3. **Auto-label image** labels the selected image; **All** runs the whole batch.
-4. Correct the results on the canvas:
-   - drag a box to move it, drag any corner handle to resize
-   - click a box to select it, then relabel from the dropdown or delete it
-   - drag on empty image area to draw a new box (uses the highlighted class)
-   - shift-drag to draw a box *on top of* an existing one — on a dense board almost every pixel is
-     already inside some box, so a plain drag there would move it instead
-   - scroll to zoom, space-drag or middle-drag to pan
-5. Tune **Confidence** and **Overlap** to filter detections; **Opacity** controls box fill.
-6. **Export YOLO dataset (.zip)**.
+3. **Auto-label image** labels the current image; **All** runs the whole batch.
+4. Correct the results with the toolbar above the canvas:
+
+   | tool | what a drag does |
+   | --- | --- |
+   | **Select** (`V`) | drag a box to move it, drag a corner handle to resize, click to select |
+   | **Draw** (`D`) | draw a new box anywhere, including on top of an existing one |
+   | **Pan** (`H`) | move around the image |
+
+   With a box selected you can relabel it from the dropdown on the box, delete it with
+   **Delete box** or the `Delete` key, and step back with **Undo**. New boxes take the class shown
+   in **New box** (or press `1`–`9`).
+5. Page through a bundle with the filmstrip arrows or `←` / `→`. Each thumbnail shows its label
+   count, and a `✓` once you have hand-edited it.
+6. Tune **Confidence** and **Overlap** to filter detections; **Opacity** controls box fill.
+7. **Export YOLO dataset (.zip)**.
 
 Once you hand-edit an image, the threshold sliders stop rewriting its boxes so your corrections are
 not lost. Re-running detection on that image resets it.
@@ -107,13 +114,15 @@ Images and annotations are saved in the browser, so a refresh doesn't lose your 
 
 | key | action |
 | --- | --- |
+| `V` / `D` / `H` | select / draw / pan tool |
 | `←` / `→` | previous / next image |
 | `1`–`9` | pick the class for new boxes |
 | `Delete` | delete the selected box |
-| `Ctrl`/`Cmd` + `Z` | undo |
+| `Esc` | deselect |
+| `Ctrl`/`Cmd` + `Z` | undo · add `Shift` to redo |
 | scroll | zoom · `+` / `-` / `0` (fit) |
-| space + drag | pan |
-| shift + drag | draw a box over an existing one |
+| space + drag | pan, whatever tool is active |
+| shift + drag | draw a box, whatever tool is active |
 
 ## Choosing a model
 

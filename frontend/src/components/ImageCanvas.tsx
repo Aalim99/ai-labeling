@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { colorForClass } from '../lib/colors'
-import type { Box, LabelDisplay, LabeledImage } from '../types'
+import type { Box, LabelDisplay, LabeledImage, Tool } from '../types'
 
 interface Props {
   image: LabeledImage | null
@@ -9,6 +9,9 @@ interface Props {
   activeClass: string
   promptClasses: string[]
   hiddenClasses: Set<string>
+  tool: Tool
+  selectedBoxId: string | null
+  onSelectBox: (id: string | null) => void
   detecting: boolean
   progressLabel: string | null
   onBoxesChange: (boxes: Box[]) => void
@@ -37,6 +40,9 @@ export default function ImageCanvas({
   activeClass,
   promptClasses,
   hiddenClasses,
+  tool,
+  selectedBoxId,
+  onSelectBox,
   detecting,
   progressLabel,
   onBoxesChange,
@@ -46,7 +52,6 @@ export default function ImageCanvas({
   const [viewport, setViewport] = useState({ w: 800, h: 600 })
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
-  const [selectedBoxId, setSelectedBoxId] = useState<string | null>(null)
   const [draft, setDraft] = useState<Draft | null>(null)
   const [spaceHeld, setSpaceHeld] = useState(false)
 
@@ -74,7 +79,6 @@ export default function ImageCanvas({
 
   useEffect(() => {
     fitToView()
-    setSelectedBoxId(null)
   }, [image?.id, fitToView])
 
   // Centered when it fits, otherwise offset by the pan amount.
@@ -114,20 +118,13 @@ export default function ImageCanvas({
     function onKeyDown(e: KeyboardEvent) {
       const target = e.target as HTMLElement
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return
-
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedBoxId && image) {
-        e.preventDefault()
-        onBoxesChange(image.boxes.filter((b) => b.id !== selectedBoxId))
-        setSelectedBoxId(null)
-      }
-      if (e.key === 'Escape') setSelectedBoxId(null)
       if (e.key === '0') fitToView()
       if (e.key === '+' || e.key === '=') setZoom((z) => Math.min(MAX_ZOOM, z * 1.25))
       if (e.key === '-') setZoom((z) => Math.max(MIN_ZOOM, z / 1.25))
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [selectedBoxId, image, onBoxesChange, fitToView])
+  }, [fitToView])
 
   function toImagePoint(clientX: number, clientY: number) {
     const rect = wrapperRef.current!.getBoundingClientRect()
@@ -203,8 +200,8 @@ export default function ImageCanvas({
 
   function startDraw(e: React.MouseEvent) {
     if (!image) return
-    // Middle mouse or space-drag pans instead of drawing.
-    if (e.button === 1 || spaceHeld) {
+    // Middle mouse, the pan tool, or a space-drag all pan instead of drawing.
+    if (e.button === 1 || spaceHeld || tool === 'pan') {
       startPan(e)
       return
     }
@@ -217,7 +214,7 @@ export default function ImageCanvas({
   function beginDraw(e: React.MouseEvent) {
     if (!image) return
     e.preventDefault()
-    setSelectedBoxId(null)
+    onSelectBox(null)
 
     const start = toImagePoint(e.clientX, e.clientY)
     let current = start
@@ -243,7 +240,7 @@ export default function ImageCanvas({
         className: activeClass || promptClasses[0] || 'object',
       }
       onBoxesChange([...image.boxes, newBox])
-      setSelectedBoxId(newBox.id)
+      onSelectBox(newBox.id)
     }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
@@ -251,20 +248,20 @@ export default function ImageCanvas({
 
   function startMove(e: React.MouseEvent, box: Box) {
     if (!image) return
-    if (e.button === 1 || spaceHeld) {
+    if (e.button === 1 || spaceHeld || tool === 'pan') {
       startPan(e)
       return
     }
     if (e.button !== 0) return
     e.stopPropagation()
-    // On a dense board nearly every pixel sits inside some box, so shift-drag
-    // forces a new box instead of moving the one underneath.
-    if (e.shiftKey) {
+    // On a dense board nearly every pixel sits inside some box, so the Draw
+    // tool (or a shift-drag) makes a new box instead of moving the one under it.
+    if (e.shiftKey || tool === 'draw') {
       beginDraw(e)
       return
     }
     e.preventDefault()
-    setSelectedBoxId(box.id)
+    onSelectBox(box.id)
 
     const start = toImagePoint(e.clientX, e.clientY)
     const onMove = (ev: MouseEvent) => {
@@ -288,7 +285,7 @@ export default function ImageCanvas({
     if (!image) return
     e.stopPropagation()
     e.preventDefault()
-    setSelectedBoxId(box.id)
+    onSelectBox(box.id)
 
     const left = box.x - box.width / 2
     const top = box.y - box.height / 2
@@ -333,13 +330,18 @@ export default function ImageCanvas({
         className="relative flex-1 overflow-hidden"
         onMouseDown={startDraw}
         onContextMenu={(e) => e.preventDefault()}
-        style={{ cursor: spaceHeld ? 'grab' : image ? 'crosshair' : 'default' }}
+        style={{
+          cursor: spaceHeld || tool === 'pan' ? 'grab' : image ? 'crosshair' : 'default',
+        }}
       >
         {!image ? (
           <div className="flex h-full items-center justify-center text-center text-sm text-gray-400">
             <div>
               <p className="mb-1 font-medium text-gray-500">No image selected</p>
-              <p>Upload images on the left, then enter classes and run detection.</p>
+              <p>
+                Add images with <strong>+ Files</strong> or <strong>+ Folder</strong> below, or drop
+                them anywhere here.
+              </p>
             </div>
           </div>
         ) : (
@@ -379,7 +381,7 @@ export default function ImageCanvas({
                     height: box.height * scale,
                     border: `${selected ? 2 : 1}px solid ${selected ? '#111827' : color}`,
                     backgroundColor: `${color}${alphaHex(opacity)}`,
-                    cursor: spaceHeld ? 'grab' : 'move',
+                    cursor: spaceHeld || tool === 'pan' ? 'grab' : tool === 'draw' ? 'crosshair' : 'move',
                   }}
                   onMouseDown={(e) => startMove(e, box)}
                 >
@@ -432,7 +434,7 @@ export default function ImageCanvas({
                         <button
                           onClick={() => {
                             onBoxesChange(image.boxes.filter((b) => b.id !== box.id))
-                            setSelectedBoxId(null)
+                            onSelectBox(null)
                           }}
                           className="text-red-400 hover:text-red-300"
                         >
@@ -468,8 +470,7 @@ export default function ImageCanvas({
               : `${image.boxes.length} objects${image.edited ? ' · hand-edited' : ''}`}
           </span>
           <span className="hidden md:inline text-gray-400">
-            scroll = zoom · space-drag = pan · drag = new box · shift-drag = new box over an existing
-            one · 0 = fit
+            scroll = zoom · space-drag = pan · 0 = fit
           </span>
           <span className="flex items-center gap-1">
             <button
