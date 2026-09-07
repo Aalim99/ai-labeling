@@ -12,7 +12,6 @@ export interface LabeledImage {
   id: string
   name: string
   url: string
-  base64: string
   width: number
   height: number
   boxes: Box[]
@@ -21,3 +20,6 @@ export interface LabeledImage {
 }
 
 export type LabelDisplay = 'confidence' | 'label' | 'none'
+
+/** Tiling mode: auto turns it on for images large enough to need it. */
+export type TileMode = 'auto' | 'on' | 'off'

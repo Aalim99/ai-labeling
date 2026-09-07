@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
+import type { HealthStatus } from '../lib/api'
 import { colorForClass } from '../lib/colors'
-import type { Box, LabelDisplay } from '../types'
+import type { Box, LabelDisplay, TileMode } from '../types'
 
 interface Props {
   promptText: string
@@ -16,8 +17,17 @@ interface Props {
   onOpacityChange: (value: number) => void
   labelDisplay: LabelDisplay
   onLabelDisplayChange: (value: LabelDisplay) => void
+  tileMode: TileMode
+  onTileModeChange: (value: TileMode) => void
+  tileSize: number
+  onTileSizeChange: (value: number) => void
   boxes: Box[]
+  rawCount: number
+  hiddenClasses: Set<string>
+  onToggleClass: (className: string) => void
   imageSize: { width: number; height: number } | null
+  willTile: boolean
+  health: HealthStatus | null
   detecting: boolean
   exporting: boolean
   hasImages: boolean
@@ -27,17 +37,27 @@ interface Props {
   error: string | null
 }
 
+const PRESETS: Record<string, string> = {
+  'PCB components':
+    'integrated circuit chip, capacitor, resistor, connector, transistor, inductor, diode',
+  'Through-hole board':
+    'electrolytic capacitor, resistor, integrated circuit chip, connector header, transformer, relay, fuse',
+  Connectors: 'usb port, hdmi port, ethernet jack, ribbon connector, pin header, screw terminal',
+}
+
 function Slider({
   label,
   value,
   onChange,
+  hint,
 }: {
   label: string
   value: number
   onChange: (value: number) => void
+  hint?: string
 }) {
   return (
-    <div className="mb-4">
+    <div className="mb-3">
       <div className="mb-1 flex items-center justify-between text-xs">
         <span className="font-medium text-gray-700">{label}</span>
         <span className="text-gray-500">{value}%</span>
@@ -50,16 +70,20 @@ function Slider({
         onChange={(e) => onChange(Number(e.target.value))}
         className="w-full accent-purple-600"
       />
-      <div className="flex justify-between text-[10px] text-gray-400">
-        <span>0%</span>
-        <span>100%</span>
-      </div>
+      {hint && <p className="text-[10px] text-gray-400">{hint}</p>}
     </div>
   )
 }
 
 export default function ControlsPanel(props: Props) {
   const [copied, setCopied] = useState(false)
+
+  const classCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const box of props.boxes) counts.set(box.className, (counts.get(box.className) ?? 0) + 1)
+    for (const name of props.promptClasses) if (!counts.has(name)) counts.set(name, 0)
+    return [...counts.entries()].sort((a, b) => b[1] - a[1])
+  }, [props.boxes, props.promptClasses])
 
   const outputJson = JSON.stringify(
     {
@@ -85,50 +109,87 @@ export default function ControlsPanel(props: Props) {
     setTimeout(() => setCopied(false), 1500)
   }
 
+  const modelBusy = !props.health || !props.health.ready
+  const detectDisabled =
+    props.detecting || !props.hasImages || props.promptClasses.length === 0 || modelBusy
+
   return (
     <aside className="flex w-80 shrink-0 flex-col overflow-y-auto border-l border-gray-200 bg-white p-4">
-      <h2 className="mb-3 text-sm font-semibold text-gray-900">What to label</h2>
+      <h2 className="mb-2 text-sm font-semibold text-gray-900">What to label</h2>
 
-      <textarea
-        value={props.promptText}
-        onChange={(e) => props.onPromptTextChange(e.target.value)}
-        rows={3}
-        placeholder="capacitor, resistor, ic, connector, transistor"
-        className="mb-2 w-full resize-none rounded-md border border-gray-300 p-2 text-xs outline-none focus:border-purple-500"
-      />
+      {props.health && !props.health.prompted ? (
+        <p className="mb-3 rounded-md bg-blue-50 p-2 text-[11px] leading-4 text-blue-800">
+          <span className="font-mono">{props.health.model}</span> is a trained model with fixed
+          classes, so prompts don't apply. It detects: {props.health.classes.join(', ') || '—'}
+        </p>
+      ) : (
+        <>
+          <textarea
+            value={props.promptText}
+            onChange={(e) => props.onPromptTextChange(e.target.value)}
+            rows={3}
+            placeholder="capacitor, resistor, integrated circuit chip"
+            className="mb-2 w-full resize-none rounded-md border border-gray-300 p-2 text-xs outline-none focus:border-purple-500"
+          />
+
+          <div className="mb-2 flex flex-wrap gap-1">
+            {Object.entries(PRESETS).map(([name, value]) => (
+              <button
+                key={name}
+                onClick={() => props.onPromptTextChange(value)}
+                className="rounded border border-gray-200 px-1.5 py-0.5 text-[10px] text-gray-600 hover:bg-gray-50"
+              >
+                {name}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
 
       {props.promptClasses.length > 0 && (
-        <div className="mb-3 flex flex-wrap gap-1">
-          {props.promptClasses.map((c) => (
-            <button
-              key={c}
-              onClick={() => props.onActiveClassChange(c)}
-              className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] ${
-                props.activeClass === c ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-700'
-              }`}
-              title="Class used when you draw a box by hand"
-            >
-              <span
-                className="inline-block h-2 w-2 rounded-full"
-                style={{ backgroundColor: colorForClass(c) }}
-              />
-              {c}
-            </button>
-          ))}
+        <div className="mb-3 space-y-0.5">
+          {classCounts.map(([name, count]) => {
+            const hidden = props.hiddenClasses.has(name)
+            return (
+              <div key={name} className="flex items-center gap-1.5 text-[11px]">
+                <button
+                  onClick={() => props.onActiveClassChange(name)}
+                  className={`flex flex-1 items-center gap-1.5 rounded px-1.5 py-0.5 text-left ${
+                    props.activeClass === name ? 'bg-gray-900 text-white' : 'hover:bg-gray-100'
+                  }`}
+                  title="Class assigned to boxes you draw by hand"
+                >
+                  <span
+                    className="inline-block h-2 w-2 shrink-0 rounded-full"
+                    style={{ backgroundColor: colorForClass(name) }}
+                  />
+                  <span className={`truncate ${hidden ? 'line-through opacity-50' : ''}`}>{name}</span>
+                </button>
+                <span className="w-6 text-right tabular-nums text-gray-500">{count}</span>
+                <button
+                  onClick={() => props.onToggleClass(name)}
+                  className="w-4 text-center text-gray-400 hover:text-gray-700"
+                  title={hidden ? 'Show class' : 'Hide class'}
+                >
+                  {hidden ? '○' : '●'}
+                </button>
+              </div>
+            )
+          })}
         </div>
       )}
 
-      <div className="mb-4 flex gap-2">
+      <div className="mb-3 flex gap-2">
         <button
           onClick={props.onDetect}
-          disabled={props.detecting || !props.hasImages || props.promptClasses.length === 0}
+          disabled={detectDisabled}
           className="flex-1 rounded-md bg-purple-600 px-3 py-2 text-xs font-semibold text-white hover:bg-purple-700 disabled:opacity-40"
         >
           {props.detecting ? 'Detecting…' : 'Auto-label image'}
         </button>
         <button
           onClick={props.onDetectAll}
-          disabled={props.detecting || !props.hasImages || props.promptClasses.length === 0}
+          disabled={detectDisabled}
           className="rounded-md border border-gray-300 px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40"
         >
           All
@@ -136,19 +197,58 @@ export default function ControlsPanel(props: Props) {
       </div>
 
       {props.error && (
-        <p className="mb-3 rounded-md bg-red-50 p-2 text-[11px] text-red-700">{props.error}</p>
+        <p className="mb-3 rounded-md bg-red-50 p-2 text-[11px] leading-4 text-red-700">
+          {props.error}
+        </p>
       )}
 
-      <h2 className="mb-3 text-sm font-semibold text-gray-900">Model Visualizations</h2>
+      <h2 className="mb-2 text-sm font-semibold text-gray-900">Small object mode</h2>
+      <select
+        value={props.tileMode}
+        onChange={(e) => props.onTileModeChange(e.target.value as TileMode)}
+        className="mb-1 w-full rounded-md border border-gray-300 p-2 text-xs outline-none focus:border-purple-500"
+      >
+        <option value="auto">Auto (tile large images)</option>
+        <option value="on">Always tile</option>
+        <option value="off">Off (whole image)</option>
+      </select>
+      <p className="mb-2 text-[10px] leading-4 text-gray-400">
+        Detection normally shrinks the image to {props.tileSize}px, which erases small parts. Tiling
+        scans the board in overlapping crops at full resolution — much better recall, slower.
+        {props.willTile ? ' Tiling is on for this image.' : ' Whole-image pass for this image.'}
+      </p>
+
+      <label className="mb-1 block text-xs font-medium text-gray-700">
+        Tile size: {props.tileSize}px
+      </label>
+      <input
+        type="range"
+        min={320}
+        max={1280}
+        step={64}
+        value={props.tileSize}
+        onChange={(e) => props.onTileSizeChange(Number(e.target.value))}
+        className="mb-1 w-full accent-purple-600"
+      />
+      <p className="mb-4 text-[10px] text-gray-400">
+        Smaller tiles find smaller parts but take longer.
+      </p>
+
+      <h2 className="mb-2 text-sm font-semibold text-gray-900">Model Visualizations</h2>
       <Slider
         label="Confidence Threshold"
         value={props.confidence}
         onChange={props.onConfidenceChange}
+        hint={
+          props.rawCount > props.boxes.length
+            ? `${props.rawCount - props.boxes.length} more detections are below this threshold — lower it to see them.`
+            : 'Lower it if parts are missing.'
+        }
       />
       <Slider label="Overlap Threshold" value={props.overlap} onChange={props.onOverlapChange} />
       <Slider label="Opacity Threshold" value={props.opacity} onChange={props.onOpacityChange} />
 
-      <p className="mb-4 text-[10px] leading-4 text-gray-400">
+      <p className="mb-3 text-[10px] leading-4 text-gray-400">
         Thresholds re-filter the last detection instantly. Once you edit boxes by hand, that image
         keeps your edits until you re-run detection.
       </p>
@@ -178,7 +278,7 @@ export default function ControlsPanel(props: Props) {
           {copied ? 'copied' : 'copy'}
         </button>
       </div>
-      <pre className="max-h-64 overflow-auto rounded-md bg-gray-50 p-2 font-mono text-[10px] leading-4 text-gray-700">
+      <pre className="max-h-56 overflow-auto rounded-md bg-gray-50 p-2 font-mono text-[10px] leading-4 text-gray-700">
         {outputJson}
       </pre>
     </aside>
