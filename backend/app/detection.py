@@ -69,6 +69,25 @@ def status() -> dict:
     }
 
 
+def _check_text_encoder() -> None:
+    """Fails early with a fixable message when the CLIP module is missing.
+
+    Ultralytics' text_model.py does a top-level `import clip` and, when that
+    fails, tries to pip-install its fork straight from GitHub — which dies with
+    a confusing traceback on any machine without git.
+    """
+    if not PROMPTED:
+        return
+    try:
+        import clip  # noqa: F401
+    except ImportError as exc:
+        raise RuntimeError(
+            "The 'clip' package is missing. Prompt-driven models need it to read text prompts. "
+            "Install it with:  pip install openai-clip  (no git required), "
+            "or re-run: pip install -r requirements.txt"
+        ) from exc
+
+
 def load_model() -> YOLO:
     """Loads weights and warms the text encoder. Safe to call repeatedly."""
     global _model
@@ -79,6 +98,7 @@ def load_model() -> YOLO:
         _state["loading"] = True
         _state["error"] = None
         try:
+            _check_text_encoder()
             logger.info("Loading %s (first run downloads weights, this can take a while)", MODEL_NAME)
             if ENGINE == "yoloe":
                 model = YOLOE(MODEL_NAME)

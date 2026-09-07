@@ -6,3 +6,9 @@ python-multipart>=0.0.20
 pillow>=11.0
 numpy>=1.26
 ultralytics>=8.4,<9.0
+
+# Ultralytics' text-encoder module does a top-level `import clip`, so the
+# prompt-driven models need it even though YOLOE embeds text with MobileCLIP.
+# Without it Ultralytics tries to pip-install its CLIP fork from GitHub, which
+# fails on any machine without git. This PyPI build provides the same module.
+openai-clip>=1.0.1

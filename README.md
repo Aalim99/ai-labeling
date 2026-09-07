@@ -59,16 +59,31 @@ about 4× the runtime.
 
 ### Backend
 
+**Windows** (PowerShell or Command Prompt — `source` is a Unix command and won't work here):
+
+```
+cd backend
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn app.main:app --port 8000
+```
+
+**macOS / Linux:**
+
 ```bash
 cd backend
 python3 -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --port 8000
 ```
 
 Weights (~70 MB detector + ~600 MB text encoder) download on first startup, not on the first
 request, so the UI shows `loading model…` instead of hanging. Watch the terminal for progress.
+
+Git is **not** required. Ultralytics would otherwise try to install its CLIP fork from GitHub;
+`requirements.txt` pulls the same module from PyPI (`openai-clip`) instead.
 
 ### Frontend
 
@@ -151,6 +166,8 @@ cd backend
 python scripts/try_image.py board.jpg --classes "capacitor, resistor, integrated circuit chip"
 ```
 
+(On Windows, activate the venv first with `.venv\Scripts\activate`.)
+
 It prints detection counts grouped by confidence band and writes `board_detected.png` with the
 boxes drawn on. Useful for comparing prompts or tile settings quickly:
 
@@ -214,6 +231,15 @@ proxy expects. Start it and check the header pill turns green.
 Check with `netsh interface ipv4 show excludedportrange protocol=tcp`, then use a free port
 (`--port 8010`) and point the frontend at it, or run `net stop winnat && net start winnat` in an
 elevated shell.
+
+**`ModuleNotFoundError: No module named 'clip'`**, or pip failing on
+`git+https://github.com/ultralytics/CLIP.git` with `Cannot find command 'git'` — Ultralytics is
+trying to fetch its CLIP fork from GitHub. Install the PyPI build instead, no git needed:
+`pip install openai-clip`. It is already in `requirements.txt`, so re-running
+`pip install -r requirements.txt` also fixes it.
+
+**`'source' is not recognized`** — that is a Unix command. On Windows activate the venv with
+`.venv\Scripts\activate` (see the Windows block above).
 
 **numpy fails to build during `pip install`** — your Python is newer than the pinned wheel. Use
 Python 3.11/3.12, or upgrade pip first (`python -m pip install --upgrade pip setuptools wheel`).
