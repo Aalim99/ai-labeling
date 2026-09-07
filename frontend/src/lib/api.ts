@@ -23,6 +23,8 @@ export interface DetectOptions {
   tileOverlap: number
   /** Run each tile at this input size; 0 means the tile's own pixel size. */
   tileImgsz: number
+  /** Add a whole-image pass alongside the tiles, so big parts are seen too. */
+  multiscale: boolean
 }
 
 interface RawPrediction {
@@ -72,6 +74,7 @@ export async function detectObjects(
   form.append('tile_size', String(options.tileSize))
   form.append('tile_overlap', String(options.tileOverlap))
   form.append('tile_imgsz', String(options.tileImgsz))
+  form.append('multiscale', String(options.multiscale))
 
   let res: Response
   try {

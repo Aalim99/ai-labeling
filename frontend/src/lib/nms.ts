@@ -29,6 +29,22 @@ function iou(a: Box, b: Box): number {
  * different labels — a chip resistor and a chip capacitor look identical, so
  * open-vocabulary models routinely emit both for one component.
  */
+/**
+ * Two boxes of very different sizes are nested objects, not rival labels for
+ * one part — a chip sitting on a board, a pin inside a connector. Suppressing
+ * across that gap deletes the big object, which is how a whole IC disappears
+ * behind the small high-confidence parts around it.
+ */
+const MAX_SCALE_RATIO = 4
+
+function comparableSize(a: Box, b: Box): boolean {
+  const areaA = a.width * a.height
+  const areaB = b.width * b.height
+  if (areaA <= 0 || areaB <= 0) return false
+  const ratio = areaA > areaB ? areaA / areaB : areaB / areaA
+  return ratio <= MAX_SCALE_RATIO
+}
+
 export function filterAndNms(
   boxes: Box[],
   confidenceThreshold: number,
@@ -41,9 +57,13 @@ export function filterAndNms(
 
   const kept: Box[] = []
   for (const box of candidates) {
-    const duplicate = kept.some(
-      (k) => (mergeClasses || k.className === box.className) && iou(k, box) > overlapThreshold,
-    )
+    const duplicate = kept.some((k) => {
+      if (iou(k, box) <= overlapThreshold) return false
+      if (k.className === box.className) return true
+      // Cross-class merging only applies to boxes that could plausibly be the
+      // same physical part.
+      return mergeClasses && comparableSize(k, box)
+    })
     if (!duplicate) kept.push(box)
   }
   return kept

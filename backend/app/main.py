@@ -70,6 +70,7 @@ async def detect_endpoint(
     tile_size: int = Form(640),
     tile_overlap: float = Form(0.25),
     tile_imgsz: int = Form(0),
+    multiscale: bool = Form(True),
 ):
     classes = [c.strip() for c in prompts.split(",") if c.strip()]
     if not classes:
@@ -96,6 +97,7 @@ async def detect_endpoint(
             tile_overlap,
             1.0,
             tile_imgsz,
+            multiscale,
         )
     except Exception as exc:
         logger.exception("Detection failed")

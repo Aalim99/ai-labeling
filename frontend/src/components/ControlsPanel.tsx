@@ -41,12 +41,30 @@ interface Props {
   error: string | null
 }
 
+// Each class offers several phrasings (separated by |) because open-vocabulary
+// models are very sensitive to wording — one phrasing can miss a part entirely
+// that another finds confidently. Hits report under the first phrasing.
 const PRESETS: Record<string, string> = {
+  // Chip resistors and chip capacitors are the same black rectangle in a photo,
+  // so on a dense board one honest class beats two guessed ones.
+  'SMD board (coarse)':
+    'chip | microchip | integrated circuit | black chip on circuit board, ' +
+    'smd component | small rectangular chip component | surface mount part, ' +
+    'connector | socket | port',
   'PCB components':
-    'integrated circuit chip, capacitor, resistor, connector, transistor, inductor, diode',
+    'chip | microchip | integrated circuit | processor chip, ' +
+    'capacitor | electrolytic capacitor | cylindrical capacitor, ' +
+    'resistor | chip resistor | resistor array, ' +
+    'connector | socket | header pins, ' +
+    'transistor, inductor | coil, diode',
   'Through-hole board':
-    'electrolytic capacitor, resistor, integrated circuit chip, connector header, transformer, relay, fuse',
-  Connectors: 'usb port, hdmi port, ethernet jack, ribbon connector, pin header, screw terminal',
+    'electrolytic capacitor | cylindrical capacitor can, ' +
+    'resistor | axial resistor with colour bands, ' +
+    'chip | integrated circuit | dip chip, ' +
+    'connector | header pins | terminal block, transformer | coil, relay, fuse',
+  Connectors:
+    'usb port, hdmi port, ethernet jack | rj45 socket, ribbon connector, ' +
+    'pin header, screw terminal',
 }
 
 function Slider({
@@ -132,9 +150,15 @@ export default function ControlsPanel(props: Props) {
             value={props.promptText}
             onChange={(e) => props.onPromptTextChange(e.target.value)}
             rows={3}
-            placeholder="capacitor, resistor, integrated circuit chip"
-            className="mb-2 w-full resize-none rounded-md border border-gray-300 p-2 text-xs outline-none focus:border-purple-500"
+            placeholder="chip | microchip, capacitor, resistor"
+            className="mb-1 w-full resize-none rounded-md border border-gray-300 p-2 text-xs outline-none focus:border-purple-500"
           />
+
+          <p className="mb-2 text-[10px] leading-4 text-gray-400">
+            Commas separate classes. Within a class, <code className="font-mono">|</code> adds
+            alternative wordings — the model is very sensitive to phrasing, and one wording often
+            finds parts another misses entirely. Results are labelled with the first wording.
+          </p>
 
           <div className="mb-2 flex flex-wrap gap-1">
             {Object.entries(PRESETS).map(([name, value]) => (

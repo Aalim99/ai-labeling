@@ -139,6 +139,25 @@ def _embed(model: YOLOE, prompts: Sequence[str]) -> torch.Tensor:
     return model.model.get_text_pe(list(prompts), cache_clip_model=True)
 
 
+def expand_synonyms(groups: List[str]) -> Tuple[List[str], List[str]]:
+    """Splits "chip | microchip | ic" groups into flat prompts plus their labels.
+
+    Open-vocabulary models are very sensitive to wording — one phrasing finds a
+    part another misses entirely — so a class can offer several phrasings and
+    every hit is reported under the first one.
+    """
+    flat: List[str] = []
+    labels: List[str] = []
+    for group in groups:
+        variants = [v.strip() for v in group.split("|") if v.strip()]
+        if not variants:
+            continue
+        for variant in variants:
+            flat.append(variant)
+            labels.append(variants[0])
+    return flat, labels
+
+
 def _set_classes(model: YOLO, prompts: List[str]) -> None:
     """No-op for fixed-class models, which detect whatever they were trained on."""
     global _current_classes
@@ -194,11 +213,15 @@ def _overlap_ratio(a: Prediction, b: Prediction) -> float:
 
 
 def _merge(predictions: List[Prediction], threshold: float = 0.55) -> List[Prediction]:
-    """Greedy per-class dedupe of boxes found in more than one tile."""
+    """Greedy per-class dedupe of boxes seen in more than one tile or scale.
+
+    Keyed on the class name rather than the id: two synonyms for one class have
+    different ids but must still collapse onto a single part.
+    """
     kept: List[Prediction] = []
     for pred in sorted(predictions, key=lambda p: p["confidence"], reverse=True):
         if any(
-            other["class_id"] == pred["class_id"] and _overlap_ratio(pred, other) > threshold
+            other["class_name"] == pred["class_name"] and _overlap_ratio(pred, other) > threshold
             for other in kept
         ):
             continue
@@ -214,6 +237,7 @@ def _predict(
     iou: float,
     imgsz: int,
     offset: Tuple[int, int] = (0, 0),
+    labels: List[str] | None = None,
 ) -> List[Prediction]:
     results = model.predict(
         image,
@@ -238,7 +262,13 @@ def _predict(
         width = x2 - x1
         height = y2 - y1
         cls_id = int(box.cls[0].item())
-        fallback = prompts[cls_id] if 0 <= cls_id < len(prompts) else str(cls_id)
+        # Synonyms report under their canonical label, not the phrasing that hit.
+        if labels and 0 <= cls_id < len(labels):
+            fallback = labels[cls_id]
+            canonical = labels[cls_id]
+        else:
+            fallback = prompts[cls_id] if 0 <= cls_id < len(prompts) else str(cls_id)
+            canonical = None
         predictions.append(
             Prediction(
                 x=x1 + width / 2 + dx,
@@ -246,7 +276,7 @@ def _predict(
                 width=width,
                 height=height,
                 confidence=float(box.conf[0].item()),
-                class_name=str(names.get(cls_id, fallback)),
+                class_name=canonical or str(names.get(cls_id, fallback)),
                 class_id=cls_id,
                 detection_id=str(uuid.uuid4()),
             )
@@ -265,6 +295,7 @@ def detect(
     tile_overlap: float = 0.25,
     upscale: float = 1.0,
     tile_imgsz: int = 0,
+    multiscale: bool = True,
 ) -> List[Prediction]:
     """Detects the prompted classes.
 
@@ -277,6 +308,7 @@ def detect(
     objects big enough to recognise.
     """
     model = load_model()
+    flat_prompts, labels = expand_synonyms(prompts)
 
     if upscale and upscale != 1.0:
         work = image.resize(
@@ -294,6 +326,7 @@ def detect(
             tile_overlap,
             upscale=1.0,
             tile_imgsz=tile_imgsz,
+            multiscale=multiscale,
         )
         for pred in scaled:
             pred["x"] /= upscale
@@ -304,10 +337,17 @@ def detect(
 
     # One inference at a time: the model object is shared and set_classes mutates it.
     with _infer_lock:
-        _set_classes(model, prompts)
+        _set_classes(model, flat_prompts)
 
         if not tiled:
-            return _predict(model, image, prompts, confidence, iou, imgsz)
+            return _predict(model, image, flat_prompts, confidence, iou, imgsz, labels=labels)
+
+        # A tiled pass alone cannot see anything bigger than one tile, so a
+        # board with a large chip plus tiny parts needs both scales. The
+        # whole-image pass is one extra inference against many tiles.
+        whole: List[Prediction] = []
+        if multiscale:
+            whole = _predict(model, image, flat_prompts, confidence, iou, imgsz, labels=labels)
 
         tiles = _tiles(image.width, image.height, tile_size, tile_overlap)
         logger.info("Tiled detection: %d tiles of %dpx", len(tiles), tile_size)
@@ -322,10 +362,21 @@ def detect(
             for index, (x1, y1, x2, y2) in enumerate(tiles, start=1):
                 crop = image.crop((x1, y1, x2, y2))
                 predictions.extend(
-                    _predict(model, crop, prompts, confidence, iou, crop_imgsz, offset=(x1, y1))
+                    _predict(
+                        model,
+                        crop,
+                        flat_prompts,
+                        confidence,
+                        iou,
+                        crop_imgsz,
+                        offset=(x1, y1),
+                        labels=labels,
+                    )
                 )
                 _progress["current"] = index
         finally:
             _progress["active"] = False
 
-        return _merge(predictions)
+        # Whole-image boxes come last so an equally-scored tile box wins ties;
+        # _merge sorts by confidence anyway.
+        return _merge(predictions + whole)

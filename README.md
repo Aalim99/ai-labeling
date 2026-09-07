@@ -102,7 +102,9 @@ If the backend runs elsewhere, either change the proxy target in `frontend/vite.
 
 1. Add images with **+ Files** or **+ Folder** in the strip along the bottom, or drop them onto the
    canvas. A whole folder imports at once.
-2. Type the classes you want in **What to label**, comma-separated (or use a preset).
+2. Type the classes you want in **What to label**, comma-separated (or use a preset). Within a
+   class, `|` adds alternative wordings — `chip | microchip | integrated circuit` tries all three
+   and labels every hit `chip`. Worth doing: wording changes results dramatically.
 3. **Auto-label image** labels the current image; **All** runs the whole batch.
 4. Correct the results with the toolbar above the canvas:
 
@@ -186,11 +188,21 @@ for a niche domain. Small SMD parts are genuinely hard for it. What helps, in or
    at 5–20% confidence. The panel tells you how many detections are hidden below the slider.
 2. **Match the mode to the image** — `Auto` handles it, but if parts are missing on a big scan turn
    tiling on, and on a macro shot turn it off (table above).
-3. **Use concrete nouns.** `electrolytic capacitor` and `integrated circuit chip` work better than
-   `cap` or `ic`. Try several phrasings; open-vocabulary models are sensitive to wording.
-4. **Keep "one box per part" on** unless you deliberately want overlapping classes. A chip resistor
-   and a chip capacitor are the same black rectangle, so both labels get predicted for one part.
-5. **Close the loop.** Label a batch (auto-label, then correct), export, train a YOLO model on it,
+3. **Give each class several phrasings**, separated by `|`. Wording matters enormously and the
+   failure is silent — on the reference photo, `coach` finds the bus **0 times**, while
+   `omnibus | coach | bus | vehicle` finds it at **90%**. Every phrasing is tried and hits are
+   reported under the first one:
+
+   ```
+   chip | microchip | integrated circuit, capacitor | electrolytic capacitor
+   ```
+4. **Ask for classes that are actually visible.** A chip resistor and a chip capacitor are the
+   *same black rectangle* in a photo — the marking is often the only difference, and frequently
+   there isn't one. No detector can separate them from shape alone, so asking for both mostly
+   produces confident nonsense. Prefer one honest class (`smd component`) and split later by
+   position or by reading the silkscreen. The **SMD board (coarse)** preset does this.
+5. **Keep "one box per part" on** unless you deliberately want overlapping classes.
+6. **Close the loop.** Label a batch (auto-label, then correct), export, train a YOLO model on it,
    then point `LABELING_MODEL` at your `best.pt` to pre-label the next batch far more accurately.
    That trained-model loop — not prompting — is what gets you to production accuracy on a fixed
    class set.

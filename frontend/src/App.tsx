@@ -45,7 +45,10 @@ interface Settings {
 }
 
 const DEFAULT_SETTINGS: Settings = {
-  promptText: 'integrated circuit chip, capacitor, resistor, connector',
+  promptText:
+    'chip | microchip | integrated circuit, ' +
+    'smd component | small rectangular chip component, ' +
+    'capacitor | electrolytic capacitor, connector | socket',
   confidence: 10,
   overlap: 50,
   // Light fill by default: dense boards need the image visible under the boxes.
@@ -122,13 +125,21 @@ export default function App() {
   const [history, setHistory] = useState<Snapshot[]>([])
   const [future, setFuture] = useState<Snapshot[]>([])
 
-  const promptClasses = useMemo(
+  // A class may offer several phrasings ("chip | microchip | ic"). The whole
+  // group goes to the model; the first phrasing is what the UI and the export
+  // call the class, matching the label the backend reports back.
+  const promptGroups = useMemo(
     () =>
       promptText
         .split(',')
         .map((c) => c.trim())
         .filter(Boolean),
     [promptText],
+  )
+
+  const promptClasses = useMemo(
+    () => promptGroups.map((group) => group.split('|')[0].trim()).filter(Boolean),
+    [promptGroups],
   )
 
   const selected = images.find((img) => img.id === selectedId) ?? null
@@ -377,7 +388,7 @@ export default function App() {
   }
 
   async function detectImage(target: ImageState) {
-    const rawBoxes = await detectObjects(target.file, promptClasses, RAW_CONFIDENCE, RAW_IOU, {
+    const rawBoxes = await detectObjects(target.file, promptGroups, RAW_CONFIDENCE, RAW_IOU, {
       imgsz: WHOLE_IMAGE_IMGSZ,
       tiled: shouldTile(target, tileMode),
       tileSize,
@@ -385,6 +396,9 @@ export default function App() {
       // Running each tile at twice its pixel size upsamples it, which recovers
       // the last few parts at roughly 4x the runtime.
       tileImgsz: highRecall ? tileSize * 2 : 0,
+      // Tiles cannot see anything bigger than one tile, so a board with a
+      // large chip needs the whole-image pass merged in as well.
+      multiscale: true,
     })
 
     setImages((prev) =>
