@@ -1,8 +1,10 @@
 import base64
 import io
 import random
+import shutil
 import zipfile
-from typing import List, Optional, Tuple
+from pathlib import Path
+from typing import Iterator, List, Optional, Tuple
 
 from .schemas import ExportImage, ExportRequest
 
@@ -42,7 +44,12 @@ def _unique_names(images: List[ExportImage]) -> List[str]:
     return names
 
 
-def build_yolo_zip(req: ExportRequest) -> io.BytesIO:
+def _build_files(req: ExportRequest) -> Iterator[Tuple[str, bytes]]:
+    """Yields (path, bytes) for every file of the YOLO dataset.
+
+    Shared by the zip download and the on-disk copy that training reads, so both
+    get the same clipping, splits and data.yaml.
+    """
     class_to_id = {name: idx for idx, name in enumerate(req.classes)}
     filenames = _unique_names(req.images)
 
@@ -51,40 +58,54 @@ def build_yolo_zip(req: ExportRequest) -> io.BytesIO:
     split_at = round(len(indices) * (req.train_split or 0.8))
     train_indices = set(indices[:split_at]) if len(indices) > 1 else set(indices)
 
+    for i, img in enumerate(req.images):
+        split = "train" if i in train_indices else "val"
+        filename = filenames[i]
+
+        header, _, encoded = img.image_base64.partition(",")
+        yield f"images/{split}/{filename}", base64.b64decode(encoded or header)
+
+        lines = []
+        for box in img.boxes:
+            cls_id = class_to_id.get(box.class_name)
+            if cls_id is None:
+                continue
+            clipped = _clip_box(box, img.width, img.height)
+            if clipped is None:
+                continue
+            cx, cy, w, h = clipped
+            lines.append(f"{cls_id} {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}")
+
+        label_name = filename.rsplit(".", 1)[0] + ".txt"
+        yield f"labels/{split}/{label_name}", "\n".join(lines).encode()
+
+    names_block = "\n".join(f"  {idx}: {name}" for idx, name in enumerate(req.classes))
+    has_val = len(train_indices) < len(req.images)
+    yaml_content = (
+        "train: images/train\n"
+        f"val: {'images/val' if has_val else 'images/train'}\n"
+        f"nc: {len(req.classes)}\n"
+        "names:\n"
+        f"{names_block}\n"
+    )
+    yield "data.yaml", yaml_content.encode()
+
+
+def build_yolo_zip(req: ExportRequest) -> io.BytesIO:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for i, img in enumerate(req.images):
-            split = "train" if i in train_indices else "val"
-            filename = filenames[i]
-
-            header, _, encoded = img.image_base64.partition(",")
-            raw = base64.b64decode(encoded or header)
-            zf.writestr(f"images/{split}/{filename}", raw)
-
-            lines = []
-            for box in img.boxes:
-                cls_id = class_to_id.get(box.class_name)
-                if cls_id is None:
-                    continue
-                clipped = _clip_box(box, img.width, img.height)
-                if clipped is None:
-                    continue
-                cx, cy, w, h = clipped
-                lines.append(f"{cls_id} {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}")
-
-            label_name = filename.rsplit(".", 1)[0] + ".txt"
-            zf.writestr(f"labels/{split}/{label_name}", "\n".join(lines))
-
-        names_block = "\n".join(f"  {idx}: {name}" for idx, name in enumerate(req.classes))
-        has_val = len(train_indices) < len(req.images)
-        yaml_content = (
-            "train: images/train\n"
-            f"val: {'images/val' if has_val else 'images/train'}\n"
-            f"nc: {len(req.classes)}\n"
-            "names:\n"
-            f"{names_block}\n"
-        )
-        zf.writestr("data.yaml", yaml_content)
-
+        for path, blob in _build_files(req):
+            zf.writestr(path, blob)
     buf.seek(0)
     return buf
+
+
+def write_yolo_dataset(req: ExportRequest, destination: Path) -> Path:
+    """Writes the dataset to disk and returns the path of its data.yaml."""
+    if destination.exists():
+        shutil.rmtree(destination)
+    for path, blob in _build_files(req):
+        target = destination / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(blob)
+    return destination / "data.yaml"

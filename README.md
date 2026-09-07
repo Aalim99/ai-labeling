@@ -14,6 +14,8 @@ the prompt box works. No training data is needed to start labeling.
   (default) and YOLO-World take text prompts; any custom trained `.pt` uses its own classes.
 - **Frontend** — React + Vite + Tailwind. Three panels: image list, annotation canvas, controls.
 - **Export** — images + `labels/*.txt` in YOLO format plus a `data.yaml`, zipped for download.
+- **Training** — fine-tunes a YOLO detector on the labels you corrected, then uses it for the next
+  batch. See [Training on your own labels](#training-on-your-own-labels).
 
 Detection runs once per image at a permissive threshold; the confidence and overlap sliders then
 re-filter that result client-side (confidence cutoff + per-class NMS), so they respond instantly
@@ -124,7 +126,10 @@ If the backend runs elsewhere, either change the proxy target in `frontend/vite.
 5. Page through a bundle with the filmstrip arrows or `←` / `→`. Each thumbnail shows its label
    count, and a `✓` once you have hand-edited it.
 6. Tune **Confidence** and **Overlap** to filter detections; **Opacity** controls box fill.
-7. **Export YOLO dataset (.zip)**.
+7. **Export YOLO dataset (.zip)**, and/or **train on your labels** (below).
+
+**All** deliberately skips images you have hand-edited, so a batch run cannot overwrite
+corrections you already made. Re-running detection on a single image does replace its boxes.
 
 Once you hand-edit an image, the threshold sliders stop rewriting its boxes so your corrections are
 not lost. Re-running detection on that image resets it.
@@ -161,6 +166,10 @@ LABELING_MODEL=runs/detect/train/weights/best.pt uvicorn app.main:app --port 800
 - **anything else** — treated as a trained model with fixed classes. The prompt box is disabled and
   the UI shows the classes it was trained on.
 
+You rarely need this variable: the **Labeling model** dropdown switches models at runtime, and a
+model you train in-app can be adopted with one click. `LABELING_MODEL` just sets the startup
+default.
+
 `LABELING_MAX_DET` (default 1000) caps detections per pass; raise it for very dense boards.
 
 ## Checking one image from the command line
@@ -181,6 +190,34 @@ boxes drawn on. Useful for comparing prompts or tile settings quickly:
 python scripts/try_image.py board.jpg --tiled --tile-size 512
 python scripts/try_image.py board.jpg --tiled --tile-imgsz 1280   # high recall
 ```
+
+## Training on your own labels
+
+Prompting can only ever guess what a class means. Training on corrected labels is what teaches a
+model your actual convention — which rectangle on *your* boards counts as a resistor rather than a
+capacitor. That is the only thing that fixes look-alike parts being confused, and it happens
+in-app:
+
+1. Label a batch (auto-label, then correct — bulk relabel makes this quick).
+2. In **Train on your labels**, set epochs and the base model, then press **Train**.
+3. Watch epoch and mAP50 progress. **Stop after this epoch** ends it early but keeps the weights.
+4. Press **Use this model for labeling**. The prompt box disappears, replaced by the classes the
+   model was trained on.
+5. Label the next batch — now pre-labelled far better — correct it, and train again on everything.
+
+Each round should need less correcting. The dataset and weights go under `backend/training/`
+(`dataset/` is rewritten each run, `runs/<timestamp>/weights/best.pt` is kept), and you can switch
+between any trained model and the prompt-driven ones at any time from the **Labeling model**
+dropdown.
+
+Practical notes:
+
+- **Training runs on CPU unless you have a CUDA GPU**, and CPU is slow. Start with `yolo11n`, few
+  epochs, to confirm the loop works before committing to a long run.
+- **50+ labelled images per class** is a realistic target for a usable model; the panel warns when
+  you have far fewer. A model trained on 5 images will be worse than prompting.
+- Training only uses images that have at least one box.
+- `LABELING_WORKSPACE` moves where datasets and runs are written.
 
 ## Getting good accuracy on electronics
 
@@ -237,6 +274,11 @@ fully-outside boxes are dropped, so coordinates are always valid.
 | `/api/progress` | GET | — | tile progress of the running detection |
 | `/api/detect` | POST | multipart: `image`, `prompts`, `confidence`, `iou`, `imgsz`, `tiled`, `tile_size`, `tile_overlap`, `tile_imgsz` | image size + predictions (`x`, `y` = box center, pixels) |
 | `/api/export` | POST | JSON: `images[]` (base64 + boxes), `classes[]`, `dataset_name` | dataset `.zip` |
+| `/api/models` | GET | — | prompt-driven models, training bases, and your trained runs |
+| `/api/model` | POST | JSON: `model` | switches the active labeling model |
+| `/api/train` | POST | JSON: `images[]`, `classes[]`, `epochs`, `base_model`, `imgsz` | starts training in the background |
+| `/api/train/status` | GET | — | state, epoch, metrics, resulting weights path |
+| `/api/train/cancel` | POST | — | stops after the current epoch, keeping weights |
 
 ## Troubleshooting
 

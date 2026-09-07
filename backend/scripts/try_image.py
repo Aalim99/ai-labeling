@@ -15,7 +15,7 @@ from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.detection import MODEL_NAME, detect  # noqa: E402
+from app.detection import detect, model_name  # noqa: E402
 
 DEFAULT_CLASSES = "integrated circuit chip, capacitor, resistor, connector"
 
@@ -35,7 +35,7 @@ def main() -> None:
     classes = [c.strip() for c in args.classes.split(",") if c.strip()]
     tiled = args.tiled or max(image.size) > args.imgsz
 
-    print(f"{args.image.name}  {image.width}x{image.height}  model={MODEL_NAME}")
+    print(f"{args.image.name}  {image.width}x{image.height}  model={model_name()}")
     print(f"classes: {classes}")
     print(f"mode: {'tiled ' + str(args.tile_size) + 'px' if tiled else 'whole image'} @{args.imgsz}\n")
 

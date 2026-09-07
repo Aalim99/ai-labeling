@@ -10,7 +10,7 @@ from ultralytics import YOLO, YOLOE, YOLOWorld
 
 logger = logging.getLogger("labeling.detection")
 
-MODEL_NAME = os.environ.get("LABELING_MODEL", "yoloe-11l-seg.pt")
+DEFAULT_MODEL = os.environ.get("LABELING_MODEL", "yoloe-11l-seg.pt")
 
 # Ultralytics caps detections per forward pass; dense boards blow past the default 300.
 MAX_DET = int(os.environ.get("LABELING_MAX_DET", "1000"))
@@ -26,8 +26,10 @@ def _engine_for(name: str) -> str:
     return "custom"
 
 
-ENGINE = _engine_for(MODEL_NAME)
-PROMPTED = ENGINE in ("yoloe", "world")
+# Mutable so a model trained during the session can be adopted without a
+# restart, which is the whole point of the label -> train -> relabel loop.
+_model_name = DEFAULT_MODEL
+_engine = _engine_for(DEFAULT_MODEL)
 
 _model: YOLO | None = None
 _model_lock = threading.Lock()
@@ -52,15 +54,23 @@ class Prediction(TypedDict):
     detection_id: str
 
 
+def is_prompted() -> bool:
+    return _engine in ("yoloe", "world")
+
+
+def model_name() -> str:
+    return _model_name
+
+
 def status() -> dict:
     classes: List[str] = []
-    if _model is not None and not PROMPTED:
+    if _model is not None and not is_prompted():
         names = _model.names
         classes = list(names.values()) if isinstance(names, dict) else list(names)
     return {
-        "model": MODEL_NAME,
-        "engine": ENGINE,
-        "prompted": PROMPTED,
+        "model": _model_name,
+        "engine": _engine,
+        "prompted": is_prompted(),
         "classes": classes,
         "ready": _state["ready"],
         "loading": _state["loading"],
@@ -76,7 +86,7 @@ def _check_text_encoder() -> None:
     fails, tries to pip-install its fork straight from GitHub — which dies with
     a confusing traceback on any machine without git.
     """
-    if not PROMPTED:
+    if not is_prompted():
         return
     try:
         import clip  # noqa: F401
@@ -108,19 +118,19 @@ def load_model() -> YOLO:
         _state["error"] = None
         try:
             _check_text_encoder()
-            logger.info("Loading %s (first run downloads weights, this can take a while)", MODEL_NAME)
-            if ENGINE == "yoloe":
-                model = YOLOE(MODEL_NAME)
+            logger.info("Loading %s (first run downloads weights, this can take a while)", _model_name)
+            if _engine == "yoloe":
+                model = YOLOE(_model_name)
                 # Pull the MobileCLIP text encoder now so the first detect
                 # request isn't stuck behind a ~600MB download.
                 _embed(model, ["object"])
-            elif ENGINE == "world":
-                model = YOLOWorld(MODEL_NAME)
+            elif _engine == "world":
+                model = YOLOWorld(_model_name)
             else:
-                model = YOLO(MODEL_NAME)
+                model = YOLO(_model_name)
             _model = model
             _state["ready"] = True
-            logger.info("Model ready: engine=%s device=%s", ENGINE, status()["device"])
+            logger.info("Model ready: %s engine=%s device=%s", _model_name, _engine, status()["device"])
             return model
         except Exception as exc:  # surfaced through /api/health
             _state["error"] = str(exc)
@@ -128,6 +138,29 @@ def load_model() -> YOLO:
             raise
         finally:
             _state["loading"] = False
+
+
+def switch_model(name: str) -> dict:
+    """Swaps the active model, e.g. to a checkpoint just trained in-session."""
+    global _model, _model_name, _engine, _current_classes
+
+    with _model_lock:
+        previous = (_model_name, _engine, _model)
+        _model_name = name
+        _engine = _engine_for(name)
+        _model = None
+        _current_classes = []
+        _state.update(ready=False, error=None)
+
+    try:
+        load_model()
+    except Exception:
+        # Put the working model back rather than leaving the app with none.
+        with _model_lock:
+            _model_name, _engine, _model = previous
+            _state["ready"] = _model is not None
+        raise
+    return status()
 
 
 def _embed(model: YOLOE, prompts: Sequence[str]) -> torch.Tensor:
@@ -161,9 +194,9 @@ def expand_synonyms(groups: List[str]) -> Tuple[List[str], List[str]]:
 def _set_classes(model: YOLO, prompts: List[str]) -> None:
     """No-op for fixed-class models, which detect whatever they were trained on."""
     global _current_classes
-    if not PROMPTED or prompts == _current_classes:
+    if not is_prompted() or prompts == _current_classes:
         return
-    if ENGINE == "yoloe":
+    if _engine == "yoloe":
         model.set_classes(list(prompts), _embed(model, prompts))
     else:
         model.set_classes(list(prompts))

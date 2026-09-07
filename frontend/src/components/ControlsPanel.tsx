@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
 import type { HealthStatus } from '../lib/api'
 import { colorForClass } from '../lib/colors'
-import type { Box, LabelDisplay, TileMode } from '../types'
+import type { Box, LabelDisplay, LabeledImage, TileMode } from '../types'
+import TrainPanel from './TrainPanel'
 
 interface Props {
   promptText: string
@@ -41,6 +42,10 @@ interface Props {
   onDetectAll: () => void
   onExport: () => void
   error: string | null
+  skippedCount: number
+  allImages: LabeledImage[]
+  toBase64: (image: LabeledImage) => Promise<string>
+  onModelChanged: () => void
 }
 
 // Each class offers several phrasings (separated by |) because open-vocabulary
@@ -72,6 +77,13 @@ const PRESETS: Record<string, string> = {
   Connectors:
     'usb port, hdmi port, ethernet jack | rj45 socket, ribbon connector, ' +
     'pin header, screw terminal',
+}
+
+/** Trained weights live at .../runs/<name>/weights/best.pt; show the run name. */
+function modelLabel(path: string): string {
+  const parts = path.split(/[\\/]/).filter(Boolean)
+  const runIndex = parts.lastIndexOf('weights')
+  return runIndex > 0 ? parts[runIndex - 1] : (parts[parts.length - 1] ?? path)
 }
 
 function Slider({
@@ -148,8 +160,9 @@ export default function ControlsPanel(props: Props) {
 
       {props.health && !props.health.prompted ? (
         <p className="mb-3 rounded-md bg-blue-50 p-2 text-[11px] leading-4 text-blue-800">
-          <span className="font-mono">{props.health.model}</span> is a trained model with fixed
-          classes, so prompts don't apply. It detects: {props.health.classes.join(', ') || '—'}
+          <span className="font-mono">{modelLabel(props.health.model)}</span> is your trained model,
+          so it uses the classes it was trained on rather than prompts:{' '}
+          {props.health.classes.join(', ') || '—'}
         </p>
       ) : (
         <>
@@ -158,8 +171,10 @@ export default function ControlsPanel(props: Props) {
             onChange={(e) => props.onPromptTextChange(e.target.value)}
             rows={8}
             placeholder="chip | microchip, capacitor, resistor"
-            // Synonym groups get long; keep it tall and let it be dragged taller.
-            className="mb-1 w-full resize-y rounded-md border border-gray-300 p-2 font-mono text-[11px] leading-4 outline-none focus:border-purple-500"
+            // shrink-0 matters: this panel is a flex column, so without it the
+            // box is squashed back to a couple of lines and drag-resizing snaps
+            // straight back.
+            className="mb-1 min-h-32 w-full shrink-0 resize-y rounded-md border border-gray-300 p-2 font-mono text-[11px] leading-4 outline-none focus:border-purple-500"
           />
 
           <p className="mb-2 text-[10px] leading-4 text-gray-400">
@@ -257,11 +272,26 @@ export default function ControlsPanel(props: Props) {
         </button>
       </div>
 
+      {props.skippedCount > 0 && (
+        <p className="mb-3 text-[10px] leading-4 text-gray-400">
+          <strong>All</strong> skips {props.skippedCount} hand-edited image
+          {props.skippedCount === 1 ? '' : 's'} so your corrections are not overwritten.
+        </p>
+      )}
+
       {props.error && (
         <p className="mb-3 rounded-md bg-red-50 p-2 text-[11px] leading-4 text-red-700">
           {props.error}
         </p>
       )}
+
+      <TrainPanel
+        images={props.allImages}
+        classes={props.promptClasses}
+        activeModel={props.health?.model ?? ''}
+        toBase64={props.toBase64}
+        onModelChanged={props.onModelChanged}
+      />
 
       <h2 className="mb-2 text-sm font-semibold text-gray-900">Small object mode</h2>
       <select

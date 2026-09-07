@@ -137,3 +137,83 @@ export async function exportYolo(
   if (!res.ok) throw await readError(res, 'Export failed')
   return res.blob()
 }
+
+export interface TrainStatus {
+  state: 'idle' | 'preparing' | 'training' | 'done' | 'error' | 'cancelled'
+  epoch: number
+  total_epochs: number
+  images: number
+  classes: string[]
+  metrics: Record<string, number>
+  error: string | null
+  weights: string | null
+  message: string
+}
+
+export interface ModelList {
+  prompted: string[]
+  base: string[]
+  trained: { path: string; name: string; modified: number }[]
+  active: string
+}
+
+interface TrainImage {
+  filename: string
+  image_base64: string
+  width: number
+  height: number
+  boxes: { x: number; y: number; width: number; height: number; class_name: string }[]
+}
+
+export async function fetchModels(): Promise<ModelList> {
+  const res = await fetch(`${API_BASE}/models`)
+  if (!res.ok) throw await readError(res, 'Could not list models')
+  return res.json()
+}
+
+export async function selectModel(model: string): Promise<HealthStatus> {
+  let res: Response
+  try {
+    res = await fetch(`${API_BASE}/model`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model }),
+    })
+  } catch {
+    throw networkError()
+  }
+  if (!res.ok) throw await readError(res, 'Could not switch model')
+  return res.json()
+}
+
+export async function fetchTrainStatus(): Promise<TrainStatus> {
+  const res = await fetch(`${API_BASE}/train/status`)
+  if (!res.ok) throw await readError(res, 'Could not read training status')
+  return res.json()
+}
+
+export async function startTraining(
+  images: TrainImage[],
+  classes: string[],
+  epochs: number,
+  baseModel: string,
+): Promise<TrainStatus> {
+  let res: Response
+  try {
+    res = await fetch(`${API_BASE}/train`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ images, classes, epochs, base_model: baseModel }),
+    })
+  } catch {
+    throw networkError()
+  }
+  if (!res.ok) throw await readError(res, 'Could not start training')
+  return res.json()
+}
+
+export async function cancelTraining(): Promise<TrainStatus> {
+  const res = await fetch(`${API_BASE}/train/cancel`, { method: 'POST' })
+  if (!res.ok) throw await readError(res, 'Could not cancel training')
+  return res.json()
+}

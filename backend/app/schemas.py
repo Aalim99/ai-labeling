@@ -24,3 +24,15 @@ class ExportRequest(BaseModel):
     classes: List[str]
     dataset_name: Optional[str] = "dataset"
     train_split: Optional[float] = 0.8
+
+
+class SwitchModelRequest(BaseModel):
+    model: str
+
+
+class TrainRequest(BaseModel):
+    images: List[ExportImage]
+    classes: List[str]
+    epochs: int = 60
+    base_model: str = "yolo11s.pt"
+    imgsz: int = 640

@@ -9,9 +9,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from PIL import Image
 
-from .detection import detect, load_model, progress, status
+from . import training
+from .detection import detect, load_model, progress, status, switch_model
 from .export import build_yolo_zip
-from .schemas import ExportRequest
+from .schemas import ExportRequest, SwitchModelRequest, TrainRequest
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(message)s")
 logger = logging.getLogger("labeling")
@@ -123,3 +124,54 @@ async def export_endpoint(req: ExportRequest):
         media_type="application/zip",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+@app.get("/api/models")
+def list_models():
+    """Prompt-driven bases plus every model trained in this workspace."""
+    return {
+        "prompted": [
+            "yoloe-11s-seg.pt",
+            "yoloe-11m-seg.pt",
+            "yoloe-11l-seg.pt",
+            "yolov8s-worldv2.pt",
+        ],
+        "base": training.BASE_MODELS,
+        "trained": training.list_trained_models(),
+        "active": status()["model"],
+    }
+
+
+@app.post("/api/model")
+async def select_model(req: SwitchModelRequest):
+    """Switches the model used for labeling, e.g. to one just trained."""
+    try:
+        return await run_in_threadpool(switch_model, req.model)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Could not load {req.model}: {exc}")
+
+
+@app.get("/api/train/status")
+def train_status():
+    return training.status()
+
+
+@app.post("/api/train")
+async def train(req: TrainRequest):
+    if not req.classes:
+        raise HTTPException(status_code=400, detail="classes list is required")
+    try:
+        return training.start(
+            ExportRequest(images=req.images, classes=req.classes),
+            epochs=req.epochs,
+            base_model=req.base_model,
+            imgsz=req.imgsz,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/train/cancel")
+def train_cancel():
+    training.cancel()
+    return training.status()

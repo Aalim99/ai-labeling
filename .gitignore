@@ -4,6 +4,8 @@ dist/
 __pycache__/
 *.pyc
 *.pt
+# Datasets written for training plus the runs' weights, plots and caches.
+backend/training/
 mobileclip_blt.ts
 *.zip
 .DS_Store

@@ -147,24 +147,22 @@ export default function App() {
   const selected = images.find((img) => img.id === selectedId) ?? null
   const willTile = !!selected && shouldTile(selected, tileMode)
 
-  // Backend status drives the header pill and disables detection until ready.
-  useEffect(() => {
-    let cancelled = false
-    async function poll() {
-      try {
-        const status = await fetchHealth()
-        if (!cancelled) setHealth(status)
-      } catch {
-        if (!cancelled) setHealth(null)
-      }
-    }
-    poll()
-    const id = setInterval(poll, 4000)
-    return () => {
-      cancelled = true
-      clearInterval(id)
+  // Also called right after a model switch so the UI reflects the new one
+  // without waiting for the next poll.
+  const refreshHealth = useCallback(async () => {
+    try {
+      setHealth(await fetchHealth())
+    } catch {
+      setHealth(null)
     }
   }, [])
+
+  // Backend status drives the header pill and disables detection until ready.
+  useEffect(() => {
+    refreshHealth()
+    const id = setInterval(refreshHealth, 4000)
+    return () => clearInterval(id)
+  }, [refreshHealth])
 
   // Restore the previous session's images and annotations.
   useEffect(() => {
@@ -647,7 +645,13 @@ export default function App() {
           exporting={exporting}
           hasImages={images.length > 0}
           onDetect={() => runDetect(selected ? [selected] : [])}
-          onDetectAll={() => runDetect(images)}
+          // Re-running detection replaces an image's boxes, so a batch run must
+          // not touch images whose labels have been corrected by hand.
+          onDetectAll={() => runDetect(images.filter((img) => !img.edited))}
+          skippedCount={images.filter((img) => img.edited).length}
+          allImages={images}
+          toBase64={(img) => fileToBase64((img as ImageState).file)}
+          onModelChanged={refreshHealth}
           onExport={handleExport}
           error={error}
         />
