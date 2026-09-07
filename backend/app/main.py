@@ -74,7 +74,9 @@ async def detect_endpoint(
     multiscale: bool = Form(True),
 ):
     classes = [c.strip() for c in prompts.split(",") if c.strip()]
-    if not classes:
+    # A trained model detects what it was trained on and ignores prompts, so
+    # requiring them there would block detection for no reason.
+    if not classes and status()["prompted"]:
         raise HTTPException(status_code=400, detail="At least one class prompt is required")
 
     contents = await image.read()

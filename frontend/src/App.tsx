@@ -144,6 +144,21 @@ export default function App() {
     [promptGroups],
   )
 
+  // The classes the UI works in. A trained model detects what it was trained
+  // on and ignores the prompt box, so offering prompt classes there would let
+  // you tag boxes with names the model has never heard of.
+  const effectiveClasses = useMemo(
+    () =>
+      health && !health.prompted && health.classes.length ? health.classes : promptClasses,
+    [health, promptClasses],
+  )
+
+  // Switching models changes the class list, which can leave the selected
+  // "new box" class pointing at a name the current model has never heard of.
+  const resolvedActiveClass = effectiveClasses.includes(activeClass)
+    ? activeClass
+    : (effectiveClasses[0] ?? '')
+
   const selected = images.find((img) => img.id === selectedId) ?? null
   const willTile = !!selected && shouldTile(selected, tileMode)
 
@@ -357,7 +372,7 @@ export default function App() {
         if (index > 0) setSelectedId(images[index - 1].id)
       }
       if (/^[1-9]$/.test(e.key)) {
-        const cls = promptClasses[Number(e.key) - 1]
+        const cls = effectiveClasses[Number(e.key) - 1]
         if (!cls) return
         setActiveClass(cls)
         // With a box selected, the number retags it — correcting a wrong label
@@ -374,7 +389,7 @@ export default function App() {
   }, [
     images,
     selectedId,
-    promptClasses,
+    effectiveClasses,
     undo,
     redo,
     deleteSelectedBox,
@@ -486,7 +501,7 @@ export default function App() {
     setError(null)
     try {
       const usedClasses = [
-        ...new Set([...promptClasses, ...images.flatMap((i) => i.boxes.map((b) => b.className))]),
+        ...new Set([...effectiveClasses, ...images.flatMap((i) => i.boxes.map((b) => b.className))]),
       ]
       const payload: ExportImage[] = []
       for (const img of images) {
@@ -567,8 +582,8 @@ export default function App() {
           <Toolbar
             tool={tool}
             onToolChange={setTool}
-            activeClass={activeClass || promptClasses[0] || ''}
-            promptClasses={promptClasses}
+            activeClass={resolvedActiveClass}
+            promptClasses={effectiveClasses}
             onActiveClassChange={setActiveClass}
             canUndo={history.length > 0}
             canRedo={future.length > 0}
@@ -583,8 +598,8 @@ export default function App() {
             image={selected}
             labelDisplay={labelDisplay}
             opacity={opacity}
-            activeClass={activeClass}
-            promptClasses={promptClasses}
+            activeClass={resolvedActiveClass}
+            promptClasses={effectiveClasses}
             hiddenClasses={hiddenClasses}
             tool={tool}
             selectedBoxId={selectedBoxId}
@@ -606,8 +621,8 @@ export default function App() {
         <ControlsPanel
           promptText={promptText}
           onPromptTextChange={setPromptText}
-          promptClasses={promptClasses}
-          activeClass={activeClass || promptClasses[0] || ''}
+          promptClasses={effectiveClasses}
+          activeClass={resolvedActiveClass}
           onActiveClassChange={setActiveClass}
           confidence={confidence}
           onConfidenceChange={setConfidence}

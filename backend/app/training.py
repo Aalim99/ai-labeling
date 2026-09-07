@@ -7,7 +7,6 @@ rectangle on this board counts as a resistor rather than a capacitor.
 
 import logging
 import os
-import shutil
 import threading
 import time
 from pathlib import Path
@@ -128,7 +127,9 @@ def _run(req: ExportRequest, epochs: int, base_model: str, imgsz: int) -> None:
         model = YOLO(base_model)
 
         def on_epoch_end(trainer) -> None:
-            _state["epoch"] = int(getattr(trainer, "epoch", 0)) + 1
+            # Clamp: the counter is cosmetic and must not exceed the total, or
+            # the progress bar overshoots 100%.
+            _state["epoch"] = min(int(getattr(trainer, "epoch", 0)) + 1, epochs)
             raw = getattr(trainer, "metrics", None) or {}
             # Ultralytics prefixes keys like "metrics/mAP50(B)"; keep the useful few.
             _state["metrics"] = {
@@ -137,7 +138,10 @@ def _run(req: ExportRequest, epochs: int, base_model: str, imgsz: int) -> None:
                 if isinstance(value, (int, float)) and "metrics/" in key
             }
             if _cancel.is_set():
-                trainer.epoch = trainer.epochs  # ends the loop cleanly after this epoch
+                # trainer.stop is the flag the training loop checks right after
+                # this callback. Setting trainer.epoch instead does nothing —
+                # the loop counter is a local, so training ran to completion.
+                trainer.stop = True
 
         model.add_callback("on_fit_epoch_end", on_epoch_end)
 
@@ -173,12 +177,3 @@ def _run(req: ExportRequest, epochs: int, base_model: str, imgsz: int) -> None:
         _state.update(state="error", error=str(exc), message="")
     finally:
         _state["finished_at"] = time.time()
-
-
-def delete_run(name: str) -> None:
-    """Removes one training run's directory."""
-    target = RUNS_DIR / name
-    # Guard against a name like "../.." escaping the runs directory.
-    if target.resolve().parent != RUNS_DIR.resolve() or not target.exists():
-        raise RuntimeError(f"No such training run: {name}")
-    shutil.rmtree(target)

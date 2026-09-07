@@ -343,6 +343,13 @@ def detect(
     model = load_model()
     flat_prompts, labels = expand_synonyms(prompts)
 
+    # Synonym labels are positional, matching the prompt list we set on an
+    # open-vocabulary model. A trained model's class ids index its own names
+    # instead, so applying them there renames every detection to whatever
+    # happens to sit at that index in the prompt box.
+    if not is_prompted():
+        labels = []
+
     if upscale and upscale != 1.0:
         work = image.resize(
             (round(image.width * upscale), round(image.height * upscale)),
