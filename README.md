@@ -114,9 +114,13 @@ If the backend runs elsewhere, either change the proxy target in `frontend/vite.
    | **Draw** (`D`) | draw a new box anywhere, including on top of an existing one |
    | **Pan** (`H`) | move around the image |
 
-   With a box selected you can relabel it from the dropdown on the box, delete it with
+   With a box selected, press `1`–`9` to retag it, or use the dropdown on the box; delete it with
    **Delete box** or the `Delete` key, and step back with **Undo**. New boxes take the class shown
-   in **New box** (or press `1`–`9`).
+   in **New box**.
+
+   To fix a class the model got wrong across the whole image, use the `⋯` menu next to it in the
+   class list: **→ other class** retags every box of that class at once, **✕ delete all** removes
+   them. Both are undoable. This is usually much faster than correcting boxes one at a time.
 5. Page through a bundle with the filmstrip arrows or `←` / `→`. Each thumbnail shows its label
    count, and a `✓` once you have hand-edited it.
 6. Tune **Confidence** and **Overlap** to filter detections; **Opacity** controls box fill.
@@ -133,7 +137,7 @@ Images and annotations are saved in the browser, so a refresh doesn't lose your 
 | --- | --- |
 | `V` / `D` / `H` | select / draw / pan tool |
 | `←` / `→` | previous / next image |
-| `1`–`9` | pick the class for new boxes |
+| `1`–`9` | retag the selected box · also sets the class for new boxes |
 | `Delete` | delete the selected box |
 | `Esc` | deselect |
 | `Ctrl`/`Cmd` + `Z` | undo · add `Shift` to redo |

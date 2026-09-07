@@ -68,7 +68,7 @@ const SETTINGS_KEY = 'ai-labeling:settings'
 
 // Bump when defaults are retuned, so saved settings don't pin people to old
 // values that measurement has since replaced.
-const SETTINGS_VERSION = 2
+const SETTINGS_VERSION = 3
 
 export function loadSettings<T>(fallback: T): T {
   try {

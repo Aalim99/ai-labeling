@@ -29,6 +29,8 @@ interface Props {
   rawCount: number
   hiddenClasses: Set<string>
   onToggleClass: (className: string) => void
+  onRelabelClass: (from: string, to: string) => void
+  onDeleteClass: (className: string) => void
   imageSize: { width: number; height: number } | null
   willTile: boolean
   health: HealthStatus | null
@@ -45,6 +47,11 @@ interface Props {
 // models are very sensitive to wording — one phrasing can miss a part entirely
 // that another finds confidently. Hits report under the first phrasing.
 const PRESETS: Record<string, string> = {
+  // Naming look-alike two-terminal parts is guesswork; finding them is not. One
+  // class keeps the boxes and leaves the naming to you.
+  'Every part (1 class)':
+    'component | electronic component on circuit board | smd chip component | ' +
+    'small part soldered to a circuit board',
   // Chip resistors and chip capacitors are the same black rectangle in a photo,
   // so on a dense board one honest class beats two guessed ones.
   'SMD board (coarse)':
@@ -149,9 +156,10 @@ export default function ControlsPanel(props: Props) {
           <textarea
             value={props.promptText}
             onChange={(e) => props.onPromptTextChange(e.target.value)}
-            rows={3}
+            rows={8}
             placeholder="chip | microchip, capacitor, resistor"
-            className="mb-1 w-full resize-none rounded-md border border-gray-300 p-2 text-xs outline-none focus:border-purple-500"
+            // Synonym groups get long; keep it tall and let it be dragged taller.
+            className="mb-1 w-full resize-y rounded-md border border-gray-300 p-2 font-mono text-[11px] leading-4 outline-none focus:border-purple-500"
           />
 
           <p className="mb-2 text-[10px] leading-4 text-gray-400">
@@ -194,6 +202,31 @@ export default function ControlsPanel(props: Props) {
                   <span className={`truncate ${hidden ? 'line-through opacity-50' : ''}`}>{name}</span>
                 </button>
                 <span className="w-6 text-right tabular-nums text-gray-500">{count}</span>
+
+                {/* The model confuses look-alike parts constantly, so fixing a
+                    whole class at once beats correcting boxes one by one. */}
+                <select
+                  value=""
+                  disabled={count === 0}
+                  onChange={(e) => {
+                    if (e.target.value === '__delete__') props.onDeleteClass(name)
+                    else if (e.target.value) props.onRelabelClass(name, e.target.value)
+                    e.target.value = ''
+                  }}
+                  title={`Relabel or remove all ${count} "${name}" boxes`}
+                  className="w-4 cursor-pointer appearance-none bg-transparent text-center text-gray-400 outline-none hover:text-gray-700 disabled:opacity-30"
+                >
+                  <option value="">⋯</option>
+                  {props.promptClasses
+                    .filter((c) => c !== name)
+                    .map((c) => (
+                      <option key={c} value={c}>
+                        → {c}
+                      </option>
+                    ))}
+                  <option value="__delete__">✕ delete all</option>
+                </select>
+
                 <button
                   onClick={() => props.onToggleClass(name)}
                   className="w-4 text-center text-gray-400 hover:text-gray-700"

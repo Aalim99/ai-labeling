@@ -23,7 +23,9 @@ import type { Box, LabelDisplay, LabeledImage, TileMode, Tool } from './types'
 
 // Detections are fetched once at a permissive threshold; the sliders then
 // filter that raw set client-side so they stay instant.
-const RAW_CONFIDENCE = 0.02
+// Floor for the one detection pass. Parts on niche classes score very low, so
+// this sits well under any useful threshold to give the slider room.
+const RAW_CONFIDENCE = 0.005
 const RAW_IOU = 0.7
 
 interface ImageState extends LabeledImage {
@@ -297,6 +299,23 @@ export default function App() {
     applySnapshot(entry)
   }, [future, snapshot, applySnapshot])
 
+  /** Bulk-fixes a class the model got wrong across the whole image. */
+  const relabelClass = useCallback(
+    (from: string, to: string) => {
+      if (!selected) return
+      updateBoxes(selected.boxes.map((b) => (b.className === from ? { ...b, className: to } : b)))
+    },
+    [selected, updateBoxes],
+  )
+
+  const deleteClass = useCallback(
+    (name: string) => {
+      if (!selected) return
+      updateBoxes(selected.boxes.filter((b) => b.className !== name))
+    },
+    [selected, updateBoxes],
+  )
+
   const deleteSelectedBox = useCallback(() => {
     if (!selected || !selectedBoxId) return
     updateBoxes(selected.boxes.filter((b) => b.id !== selectedBoxId))
@@ -341,12 +360,30 @@ export default function App() {
       }
       if (/^[1-9]$/.test(e.key)) {
         const cls = promptClasses[Number(e.key) - 1]
-        if (cls) setActiveClass(cls)
+        if (!cls) return
+        setActiveClass(cls)
+        // With a box selected, the number retags it — correcting a wrong label
+        // is the common case, and reaching for the dropdown each time is slow.
+        if (selectedBoxId && selected) {
+          updateBoxes(
+            selected.boxes.map((b) => (b.id === selectedBoxId ? { ...b, className: cls } : b)),
+          )
+        }
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [images, selectedId, promptClasses, undo, redo, deleteSelectedBox])
+  }, [
+    images,
+    selectedId,
+    promptClasses,
+    undo,
+    redo,
+    deleteSelectedBox,
+    selectedBoxId,
+    selected,
+    updateBoxes,
+  ])
 
   async function addFiles(files: FileList) {
     setError(null)
@@ -593,6 +630,8 @@ export default function App() {
           boxes={selected?.boxes ?? []}
           rawCount={selected?.rawBoxes.length ?? 0}
           hiddenClasses={hiddenClasses}
+          onRelabelClass={relabelClass}
+          onDeleteClass={deleteClass}
           onToggleClass={(name) =>
             setHiddenClasses((prev) => {
               const next = new Set(prev)
