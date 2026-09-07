@@ -66,18 +66,25 @@ export async function clearImages(): Promise<void> {
 
 const SETTINGS_KEY = 'ai-labeling:settings'
 
+// Bump when defaults are retuned, so saved settings don't pin people to old
+// values that measurement has since replaced.
+const SETTINGS_VERSION = 2
+
 export function loadSettings<T>(fallback: T): T {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY)
-    return raw ? { ...fallback, ...JSON.parse(raw) } : fallback
+    if (!raw) return fallback
+    const parsed = JSON.parse(raw)
+    if (parsed?.version !== SETTINGS_VERSION) return fallback
+    return { ...fallback, ...parsed }
   } catch {
     return fallback
   }
 }
 
-export function saveSettings(settings: unknown): void {
+export function saveSettings(settings: object): void {
   try {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...settings, version: SETTINGS_VERSION }))
   } catch {
     // ignore
   }

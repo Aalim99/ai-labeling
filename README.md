@@ -21,20 +21,39 @@ without re-running the model.
 
 ### Small object mode (tiling)
 
-Detection normally shrinks the whole image to ~640px, which erases small parts — a 0402 resistor in
-a 4000px board photo becomes a few pixels. Tiling scans the image in overlapping crops at full
-resolution instead, and merges the results.
+What decides whether a small part is found is **how big it ends up in the model's input tensor**.
+Two regimes, both measured on synthetic scenes with 20 known objects:
 
-Measured on a 4000×3000 test image with 20 small objects (3% of image height):
+**A big board scan** (4000×3000, parts ~45px) has to be downscaled to fit the model, which erases
+the parts. Tiling scans it in overlapping crops at full resolution instead:
 
-| mode | objects found |
-| --- | --- |
-| whole image @640 | 0 / 20 |
-| whole image @1280 | 0 / 20 |
-| tiled 640px | **20 / 20** |
+| mode | found | confident (≥25%) | time |
+| --- | --- | --- | --- |
+| whole image @1280 | 14 / 20 | 0 | 10s |
+| whole image @2560 | 18 / 20 | 0 | 14s |
+| **tiled 640px** | **20 / 20** | 14 | 28s |
+| tiled 640px, high recall | 20 / 20 | **20** | 106s |
 
-`Auto` (the default) turns tiling on for images large enough to need it. It is slower — cost grows
-with tile count — so smaller tiles find smaller parts but take longer.
+**A macro shot** (834×500, parts ~25px) is the opposite case — there is nothing to slice, and
+tiling at native size makes things *worse*. Upsampling the whole image is what helps:
+
+| input size | found | confident (≥25%) |
+| --- | --- | --- |
+| whole image @640 | 19 / 20 | 0 |
+| whole image @864 | 20 / 20 | 0 |
+| **whole image @1280** | 20 / 20 | **19** |
+| whole image @1536 | 20 / 20 | 0 |
+| whole image @1920 | 20 / 20 | 0 |
+| tiled 640px | 3 / 20 | 0 |
+
+Note what changes in that second table: the objects are found at nearly every size — only at 1280
+do they score high enough to survive a normal confidence threshold. **A detection you can't see
+because it scored 8% looks exactly like no detection at all**, which is why the confidence slider
+defaults low.
+
+So `Auto` runs a whole-image pass at 1280 and only tiles when the image is larger than that.
+**High recall** runs each tile at double size: in testing it turned every detection confident, for
+about 4× the runtime.
 
 ## Setup
 
@@ -114,17 +133,38 @@ LABELING_MODEL=runs/detect/train/weights/best.pt uvicorn app.main:app --port 800
 
 `LABELING_MAX_DET` (default 1000) caps detections per pass; raise it for very dense boards.
 
+## Checking one image from the command line
+
+To see what the model finds without going through the UI:
+
+```bash
+cd backend
+python scripts/try_image.py board.jpg --classes "capacitor, resistor, integrated circuit chip"
+```
+
+It prints detection counts grouped by confidence band and writes `board_detected.png` with the
+boxes drawn on. Useful for comparing prompts or tile settings quickly:
+
+```bash
+python scripts/try_image.py board.jpg --tiled --tile-size 512
+python scripts/try_image.py board.jpg --tiled --tile-imgsz 1280   # high recall
+```
+
 ## Getting good accuracy on electronics
 
 Open-vocabulary detection is a way to *start* labeling without any data, not a finished detector
 for a niche domain. Small SMD parts are genuinely hard for it. What helps, in order:
 
-1. **Turn on tiling** — by far the biggest factor for small parts (table above).
-2. **Use concrete nouns.** `electrolytic capacitor` and `integrated circuit chip` work better than
+1. **Lower the confidence threshold.** This is the first thing to try, not the last. Niche classes
+   score far lower than everyday objects, and the measurements above show parts are often detected
+   at 5–20% confidence. The panel tells you how many detections are hidden below the slider.
+2. **Match the mode to the image** — `Auto` handles it, but if parts are missing on a big scan turn
+   tiling on, and on a macro shot turn it off (table above).
+3. **Use concrete nouns.** `electrolytic capacitor` and `integrated circuit chip` work better than
    `cap` or `ic`. Try several phrasings; open-vocabulary models are sensitive to wording.
-3. **Lower the confidence threshold.** Niche classes score lower than everyday objects. The panel
-   tells you how many detections are hidden below the current threshold.
-4. **Close the loop.** Label a batch (auto-label, then correct), export, train a YOLO model on it,
+4. **Keep "one box per part" on** unless you deliberately want overlapping classes. A chip resistor
+   and a chip capacitor are the same black rectangle, so both labels get predicted for one part.
+5. **Close the loop.** Label a batch (auto-label, then correct), export, train a YOLO model on it,
    then point `LABELING_MODEL` at your `best.pt` to pre-label the next batch far more accurately.
    That trained-model loop — not prompting — is what gets you to production accuracy on a fixed
    class set.
@@ -153,7 +193,7 @@ fully-outside boxes are dropped, so coordinates are always valid.
 | --- | --- | --- | --- |
 | `/api/health` | GET | — | model name/engine, readiness, device, fixed classes |
 | `/api/progress` | GET | — | tile progress of the running detection |
-| `/api/detect` | POST | multipart: `image`, `prompts`, `confidence`, `iou`, `imgsz`, `tiled`, `tile_size`, `tile_overlap` | image size + predictions (`x`, `y` = box center, pixels) |
+| `/api/detect` | POST | multipart: `image`, `prompts`, `confidence`, `iou`, `imgsz`, `tiled`, `tile_size`, `tile_overlap`, `tile_imgsz` | image size + predictions (`x`, `y` = box center, pixels) |
 | `/api/export` | POST | JSON: `images[]` (base64 + boxes), `classes[]`, `dataset_name` | dataset `.zip` |
 
 ## Troubleshooting
@@ -168,6 +208,10 @@ elevated shell.
 
 **numpy fails to build during `pip install`** — your Python is newer than the pinned wheel. Use
 Python 3.11/3.12, or upgrade pip first (`python -m pip install --upgrade pip setuptools wheel`).
+
+**Nothing is detected** — drag the confidence threshold down to 0 first. Parts on a niche class
+often score under 10%, and the panel reports how many are hidden. If they appear, raise the
+threshold until the false positives start outnumbering the real ones.
 
 **Detection is slow** — it runs on CPU unless a CUDA GPU is available (the header pill shows
 which). Tiling multiplies the work by the tile count; raise the tile size or turn it off for small

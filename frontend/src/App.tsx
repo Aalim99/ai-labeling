@@ -38,18 +38,24 @@ interface Settings {
   labelDisplay: LabelDisplay
   tileMode: TileMode
   tileSize: number
+  mergeClasses: boolean
+  highRecall: boolean
   selectedId: string | null
 }
 
 const DEFAULT_SETTINGS: Settings = {
   promptText: 'integrated circuit chip, capacitor, resistor, connector',
-  confidence: 25,
+  confidence: 10,
   overlap: 50,
   // Light fill by default: dense boards need the image visible under the boxes.
   opacity: 18,
   labelDisplay: 'confidence',
   tileMode: 'auto',
   tileSize: 640,
+  // Visually identical parts (chip resistor vs chip capacitor) otherwise get
+  // one box per label on the same component.
+  mergeClasses: true,
+  highRecall: false,
   selectedId: null,
 }
 
@@ -72,10 +78,17 @@ function fileToBase64(file: File): Promise<string> {
   })
 }
 
-/** Model input size: avoid downscaling small images, cap the cost of huge ones. */
-function inferenceSize(image: { width: number; height: number }): number {
-  const longest = Math.max(image.width, image.height)
-  return Math.min(1280, Math.max(640, Math.ceil(longest / 32) * 32))
+// Measured: on an 834px image with 25px objects, every input size finds the
+// objects, but only at 1280 do they score above a usable confidence (19/20
+// above 25%, versus 0/20 at 640, 864, 1024, 1408, 1536 and 1920). So a
+// non-tiled pass always runs at 1280, upsampling small images to get there.
+const WHOLE_IMAGE_IMGSZ = 1280
+
+/** Tiling only pays off once the image is bigger than the model input. */
+function shouldTile(image: { width: number; height: number }, mode: TileMode): boolean {
+  if (mode === 'on') return true
+  if (mode === 'off') return false
+  return Math.max(image.width, image.height) > WHOLE_IMAGE_IMGSZ
 }
 
 export default function App() {
@@ -92,6 +105,8 @@ export default function App() {
   const [labelDisplay, setLabelDisplay] = useState<LabelDisplay>(stored.labelDisplay)
   const [tileMode, setTileMode] = useState<TileMode>(stored.tileMode)
   const [tileSize, setTileSize] = useState(stored.tileSize)
+  const [mergeClasses, setMergeClasses] = useState(stored.mergeClasses)
+  const [highRecall, setHighRecall] = useState(stored.highRecall)
   const [hiddenClasses, setHiddenClasses] = useState<Set<string>>(new Set())
   const [health, setHealth] = useState<HealthStatus | null>(null)
   const [detecting, setDetecting] = useState(false)
@@ -112,9 +127,7 @@ export default function App() {
   )
 
   const selected = images.find((img) => img.id === selectedId) ?? null
-  const willTile =
-    tileMode === 'on' ||
-    (tileMode === 'auto' && !!selected && Math.max(selected.width, selected.height) > tileSize * 1.5)
+  const willTile = !!selected && shouldTile(selected, tileMode)
 
   // Backend status drives the header pill and disables detection until ready.
   useEffect(() => {
@@ -190,9 +203,22 @@ export default function App() {
       labelDisplay,
       tileMode,
       tileSize,
+      mergeClasses,
+      highRecall,
       selectedId,
     })
-  }, [promptText, confidence, overlap, opacity, labelDisplay, tileMode, tileSize, selectedId])
+  }, [
+    promptText,
+    confidence,
+    overlap,
+    opacity,
+    labelDisplay,
+    tileMode,
+    tileSize,
+    mergeClasses,
+    highRecall,
+    selectedId,
+  ])
 
   // Re-apply the threshold sliders to raw detections for every image the user
   // hasn't hand-edited yet.
@@ -200,10 +226,10 @@ export default function App() {
     setImages((prev) =>
       prev.map((img) => {
         if (img.edited || !img.detected) return img
-        return { ...img, boxes: filterAndNms(img.rawBoxes, confidence / 100, overlap / 100) }
+        return { ...img, boxes: filterAndNms(img.rawBoxes, confidence / 100, overlap / 100, mergeClasses) }
       }),
     )
-  }, [confidence, overlap])
+  }, [confidence, overlap, mergeClasses])
 
   const updateBoxes = useCallback(
     (boxes: Box[]) => {
@@ -304,15 +330,14 @@ export default function App() {
   }
 
   async function detectImage(target: ImageState) {
-    const tiled =
-      tileMode === 'on' ||
-      (tileMode === 'auto' && Math.max(target.width, target.height) > tileSize * 1.5)
-
     const rawBoxes = await detectObjects(target.file, promptClasses, RAW_CONFIDENCE, RAW_IOU, {
-      imgsz: inferenceSize(target),
-      tiled,
+      imgsz: WHOLE_IMAGE_IMGSZ,
+      tiled: shouldTile(target, tileMode),
       tileSize,
       tileOverlap: 0.25,
+      // Running each tile at twice its pixel size upsamples it, which recovers
+      // the last few parts at roughly 4x the runtime.
+      tileImgsz: highRecall ? tileSize * 2 : 0,
     })
 
     setImages((prev) =>
@@ -463,6 +488,10 @@ export default function App() {
           onTileModeChange={setTileMode}
           tileSize={tileSize}
           onTileSizeChange={setTileSize}
+          mergeClasses={mergeClasses}
+          onMergeClassesChange={setMergeClasses}
+          highRecall={highRecall}
+          onHighRecallChange={setHighRecall}
           boxes={selected?.boxes ?? []}
           rawCount={selected?.rawBoxes.length ?? 0}
           hiddenClasses={hiddenClasses}

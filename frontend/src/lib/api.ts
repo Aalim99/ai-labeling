@@ -21,6 +21,8 @@ export interface DetectOptions {
   tiled: boolean
   tileSize: number
   tileOverlap: number
+  /** Run each tile at this input size; 0 means the tile's own pixel size. */
+  tileImgsz: number
 }
 
 interface RawPrediction {
@@ -69,6 +71,7 @@ export async function detectObjects(
   form.append('tiled', String(options.tiled))
   form.append('tile_size', String(options.tileSize))
   form.append('tile_overlap', String(options.tileOverlap))
+  form.append('tile_imgsz', String(options.tileImgsz))
 
   let res: Response
   try {

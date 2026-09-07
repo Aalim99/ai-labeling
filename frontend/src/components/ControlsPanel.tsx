@@ -21,6 +21,10 @@ interface Props {
   onTileModeChange: (value: TileMode) => void
   tileSize: number
   onTileSizeChange: (value: number) => void
+  mergeClasses: boolean
+  onMergeClassesChange: (value: boolean) => void
+  highRecall: boolean
+  onHighRecallChange: (value: boolean) => void
   boxes: Box[]
   rawCount: number
   hiddenClasses: Set<string>
@@ -230,9 +234,25 @@ export default function ControlsPanel(props: Props) {
         onChange={(e) => props.onTileSizeChange(Number(e.target.value))}
         className="mb-1 w-full accent-purple-600"
       />
-      <p className="mb-4 text-[10px] text-gray-400">
+      <p className="mb-2 text-[10px] text-gray-400">
         Smaller tiles find smaller parts but take longer.
       </p>
+
+      <label className="mb-4 flex cursor-pointer items-start gap-2 text-[11px] text-gray-700">
+        <input
+          type="checkbox"
+          checked={props.highRecall}
+          onChange={(e) => props.onHighRecallChange(e.target.checked)}
+          className="mt-0.5 accent-purple-600"
+        />
+        <span>
+          High recall (slower)
+          <span className="block text-[10px] leading-4 text-gray-400">
+            Runs each tile at double size. Recovered the last missing part in testing (19/20 to
+            20/20) for about 4x the runtime.
+          </span>
+        </span>
+      </label>
 
       <h2 className="mb-2 text-sm font-semibold text-gray-900">Model Visualizations</h2>
       <Slider
@@ -246,6 +266,23 @@ export default function ControlsPanel(props: Props) {
         }
       />
       <Slider label="Overlap Threshold" value={props.overlap} onChange={props.onOverlapChange} />
+
+      <label className="mb-3 flex cursor-pointer items-start gap-2 text-[11px] text-gray-700">
+        <input
+          type="checkbox"
+          checked={props.mergeClasses}
+          onChange={(e) => props.onMergeClassesChange(e.target.checked)}
+          className="mt-0.5 accent-purple-600"
+        />
+        <span>
+          One box per part
+          <span className="block text-[10px] leading-4 text-gray-400">
+            Drops duplicate boxes on the same component under different labels — a chip resistor
+            and a chip capacitor look alike, so both often get predicted.
+          </span>
+        </span>
+      </label>
+
       <Slider label="Opacity Threshold" value={props.opacity} onChange={props.onOpacityChange} />
 
       <p className="mb-3 text-[10px] leading-4 text-gray-400">

@@ -21,35 +21,30 @@ function iou(a: Box, b: Box): number {
 }
 
 /**
- * Filters raw detections by confidence, then applies per-class greedy NMS at
- * the given overlap threshold. Lets the confidence/overlap sliders re-render
- * instantly from one raw detection pass instead of re-calling the backend.
+ * Filters raw detections by confidence, then suppresses overlapping duplicates.
+ * Lets the confidence/overlap sliders re-render instantly from one raw
+ * detection pass instead of re-calling the backend.
+ *
+ * mergeClasses collapses duplicates that landed on the same part under
+ * different labels — a chip resistor and a chip capacitor look identical, so
+ * open-vocabulary models routinely emit both for one component.
  */
 export function filterAndNms(
   boxes: Box[],
   confidenceThreshold: number,
   overlapThreshold: number,
+  mergeClasses = false,
 ): Box[] {
-  const byClass = new Map<string, Box[]>()
-  for (const box of boxes) {
-    if ((box.confidence ?? 1) < confidenceThreshold) continue
-    const arr = byClass.get(box.className) ?? []
-    arr.push(box)
-    byClass.set(box.className, arr)
-  }
+  const candidates = boxes
+    .filter((box) => (box.confidence ?? 1) >= confidenceThreshold)
+    .sort((a, b) => (b.confidence ?? 1) - (a.confidence ?? 1))
 
   const kept: Box[] = []
-  for (const group of byClass.values()) {
-    const active = [...group].sort((a, b) => (b.confidence ?? 1) - (a.confidence ?? 1))
-    while (active.length) {
-      const current = active.shift()!
-      kept.push(current)
-      for (let i = active.length - 1; i >= 0; i--) {
-        if (iou(current, active[i]) > overlapThreshold) {
-          active.splice(i, 1)
-        }
-      }
-    }
+  for (const box of candidates) {
+    const duplicate = kept.some(
+      (k) => (mergeClasses || k.className === box.className) && iou(k, box) > overlapThreshold,
+    )
+    if (!duplicate) kept.push(box)
   }
   return kept
 }

@@ -234,14 +234,44 @@ def detect(
     tiled: bool = False,
     tile_size: int = 640,
     tile_overlap: float = 0.25,
+    upscale: float = 1.0,
+    tile_imgsz: int = 0,
 ) -> List[Prediction]:
     """Detects the prompted classes.
 
     With tiled=True the image is sliced into overlapping crops that are each run
     at native resolution, which is what makes small parts on a high-resolution
     board detectable at all — a whole-image pass shrinks them to a few pixels.
+
+    upscale enlarges the image before tiling. A small photo of small parts has
+    no resolution to recover by slicing alone; enlarging first gives the model
+    objects big enough to recognise.
     """
     model = load_model()
+
+    if upscale and upscale != 1.0:
+        work = image.resize(
+            (round(image.width * upscale), round(image.height * upscale)),
+            Image.LANCZOS,
+        )
+        scaled = detect(
+            work,
+            prompts,
+            confidence,
+            iou,
+            imgsz,
+            tiled,
+            tile_size,
+            tile_overlap,
+            upscale=1.0,
+            tile_imgsz=tile_imgsz,
+        )
+        for pred in scaled:
+            pred["x"] /= upscale
+            pred["y"] /= upscale
+            pred["width"] /= upscale
+            pred["height"] /= upscale
+        return scaled
 
     # One inference at a time: the model object is shared and set_classes mutates it.
     with _infer_lock:
@@ -253,13 +283,17 @@ def detect(
         tiles = _tiles(image.width, image.height, tile_size, tile_overlap)
         logger.info("Tiled detection: %d tiles of %dpx", len(tiles), tile_size)
 
+        # Running a tile at more than its own pixel size upsamples it, which
+        # makes small parts bigger in the model's input tensor.
+        crop_imgsz = tile_imgsz or tile_size
+
         _progress.update(active=True, current=0, total=len(tiles))
         predictions: List[Prediction] = []
         try:
             for index, (x1, y1, x2, y2) in enumerate(tiles, start=1):
                 crop = image.crop((x1, y1, x2, y2))
                 predictions.extend(
-                    _predict(model, crop, prompts, confidence, iou, tile_size, offset=(x1, y1))
+                    _predict(model, crop, prompts, confidence, iou, crop_imgsz, offset=(x1, y1))
                 )
                 _progress["current"] = index
         finally:
