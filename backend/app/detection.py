@@ -80,7 +80,16 @@ def _check_text_encoder() -> None:
         return
     try:
         import clip  # noqa: F401
-    except ImportError as exc:
+    except ModuleNotFoundError as exc:
+        if exc.name == "pkg_resources":
+            # openai-clip does `from pkg_resources import packaging`, but
+            # setuptools removed pkg_resources in 82.0.0, and a fresh venv on
+            # Python 3.12+ doesn't install setuptools at all. requirements.txt
+            # pins setuptools<82, so this means that pin didn't take effect.
+            raise RuntimeError(
+                "'clip' is installed but needs pkg_resources, which recent setuptools no longer "
+                "ships. Fix with:  pip install \"setuptools<82\" --force-reinstall"
+            ) from exc
         raise RuntimeError(
             "The 'clip' package is missing. Prompt-driven models need it to read text prompts. "
             "Install it with:  pip install openai-clip  (no git required), "

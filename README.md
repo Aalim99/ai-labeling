@@ -236,7 +236,22 @@ elevated shell.
 `git+https://github.com/ultralytics/CLIP.git` with `Cannot find command 'git'` — Ultralytics is
 trying to fetch its CLIP fork from GitHub. Install the PyPI build instead, no git needed:
 `pip install openai-clip`. It is already in `requirements.txt`, so re-running
-`pip install -r requirements.txt` also fixes it.
+`pip install -r requirements.txt` also fixes it — as long as your `requirements.txt` is up to date;
+re-download the repo if `findstr openai-clip requirements.txt` (Windows) / `grep openai-clip
+requirements.txt` (macOS/Linux) prints nothing.
+
+**`ModuleNotFoundError: No module named 'pkg_resources'`** (after `clip` imports successfully in
+every other respect) — `openai-clip`'s code does `from pkg_resources import packaging`, but
+setuptools **removed pkg_resources in version 82.0.0** (confirmed present in 81.x, gone in 82.x),
+and a fresh venv on Python 3.12+ doesn't install setuptools at all. Fix:
+
+```
+pip install "setuptools<82" --force-reinstall
+```
+
+`requirements.txt` pins this already; if you still hit it, your venv's setuptools was upgraded
+after that pin was applied (a `pip install --upgrade` elsewhere in the setup, or the venv was
+created before this pin existed in a version you downloaded) — the command above forces it back.
 
 **`'source' is not recognized`** — that is a Unix command. On Windows activate the venv with
 `.venv\Scripts\activate` (see the Windows block above).

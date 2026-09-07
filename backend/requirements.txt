@@ -12,3 +12,8 @@ ultralytics>=8.4,<9.0
 # Without it Ultralytics tries to pip-install its CLIP fork from GitHub, which
 # fails on any machine without git. This PyPI build provides the same module.
 openai-clip>=1.0.1
+# openai-clip's code does `from pkg_resources import packaging`. setuptools
+# removed pkg_resources in 82.0.0 (confirmed: present in 81.x, gone in 82.x),
+# and a fresh venv on Python >=3.12 doesn't install setuptools at all, so
+# `import clip` fails with "No module named 'pkg_resources'" without this pin.
+setuptools<82
